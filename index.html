@@ -41,15 +41,6 @@
       background: linear-gradient(145deg, #fffbeb 0%, #fef08a 100%);
     }
 
-    /* Hiệu ứng nhấp nháy nhẹ cho trận Đang thi đấu */
-    @keyframes livePulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-    .live-dot {
-      animation: livePulse 1.5s infinite;
-    }
-
     /* Khung trận đấu theo trạng thái */
     .match-live {
       background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%) !important;
@@ -97,33 +88,34 @@
   <div id="scoreboard-screen" class="h-screen flex flex-col hidden">
     
     <!-- TOP HEADER & NAVIGATION MENU -->
-    <header class="bg-gradient-to-r from-slate-900 via-sky-950 to-emerald-950 text-white px-6 py-3 shadow-lg flex items-center justify-between shrink-0 border-b-4 border-emerald-500">
-      <!-- Thông tin giải đấu -->
-      <div class="flex items-center gap-4 min-w-0">
-        <button onclick="backToSelector()" title="Đổi giải đấu" class="bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-lg transition flex items-center gap-2 text-sm font-semibold shrink-0">
+    <header class="bg-gradient-to-r from-slate-900 via-sky-950 to-emerald-950 text-white px-4 py-2.5 shadow-lg flex flex-wrap lg:flex-nowrap items-center justify-between gap-3 shrink-0 border-b-4 border-emerald-500">
+      <!-- Thông tin giải đấu (Hiển thị đầy đủ chữ, không truncate) -->
+      <div class="flex items-center gap-3 flex-1 min-w-[260px]">
+        <button onclick="backToSelector()" title="Đổi giải đấu" class="bg-white/10 hover:bg-white/20 text-white px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5 text-xs font-semibold shrink-0">
           <i class="fa-solid fa-arrow-left"></i> Giải đấu
         </button>
-        <div class="truncate">
-          <h1 id="header-tour-name" class="text-xl md:text-2xl font-extrabold tracking-tight text-white truncate">TÊN GIẢI ĐẤU</h1>
-          <div class="flex items-center gap-4 text-xs md:text-sm text-sky-200 font-medium">
+        <div>
+          <h1 id="header-tour-name" class="text-base md:text-lg xl:text-xl font-extrabold tracking-tight text-white leading-snug break-words">TÊN GIẢI ĐẤU</h1>
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] md:text-xs text-sky-200 font-medium">
             <span id="header-tour-org"><i class="fa-solid fa-building mr-1"></i> Đơn vị tổ chức</span>
             <span id="header-tour-date"><i class="fa-regular fa-calendar mr-1"></i> Ngày thi đấu</span>
           </div>
         </div>
       </div>
 
-      <!-- Thanh Menu Chọn Vòng Thi Đấu & Thành Tích -->
-      <nav id="rounds-nav" class="flex items-center gap-2 overflow-x-auto py-1 px-2">
+      <!-- Thanh Menu Chọn Vòng Thi Đấu & Thành Tích (Gọn gàng) -->
+      <nav id="rounds-nav" class="flex items-center gap-1.5 overflow-x-auto py-0.5 shrink-0">
         <!-- Render động các nút vòng đấu -->
       </nav>
 
-      <!-- Trạng thái Live & Đồng hồ -->
-      <div class="flex items-center gap-4 shrink-0">
-        <div id="sync-indicator" class="hidden md:flex items-center gap-2 bg-emerald-500/20 border border-emerald-400/40 px-3 py-1.5 rounded-full text-xs font-bold text-emerald-300">
-          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 live-dot"></span>
-          <span>LIVE AUTO-SYNC</span>
-        </div>
-        <div id="live-clock" class="text-lg font-mono font-bold text-amber-300 bg-black/30 px-3 py-1 rounded-lg">00:00</div>
+      <!-- Nút Load Data & Đồng hồ -->
+      <div class="flex items-center gap-2.5 shrink-0">
+        <button id="btn-refresh-data" onclick="manualRefreshData()" title="Cập nhật dữ liệu mới nhất"
+                class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow transition cursor-pointer">
+          <i id="refresh-icon" class="fa-solid fa-rotate-right"></i>
+          <span>Cập nhật</span>
+        </button>
+        <div id="live-clock" class="text-sm md:text-base font-mono font-bold text-amber-300 bg-black/30 px-2.5 py-1 rounded-lg">00:00</div>
       </div>
     </header>
 
@@ -147,16 +139,20 @@
 
     // Biến toàn cục lưu trạng thái
     let currentMaGiaiDau = null;
-    let tournamentData = null; // { tournament, teams, matches }
-    let activeTab = null;      // 'Vòng bảng', 'Tứ kết', ..., 'THANH_TICH'
+    let tournamentData = null;
+    let activeTab = null;
     let refreshInterval = null;
+    let isFetching = false;
 
-    // Thứ tự ưu tiên chuẩn của các vòng thi đấu
+    // Thứ tự sắp xếp chuẩn: Vòng bảng --> Tứ kết --> Bán kết --> Chung kết (sau đó đến Seri B)
     const ROUND_ORDER = [
       'Vòng bảng',
-      'Tứ kết', 'Tứ kết Seri B',
-      'Bán kết', 'Bán kết Seri B',
-      'Chung kết', 'Chung kết Seri B'
+      'Tứ kết',
+      'Bán kết',
+      'Chung kết',
+      'Tứ kết Seri B',
+      'Bán kết Seri B',
+      'Chung kết Seri B'
     ];
 
     // =========================================================================
@@ -278,7 +274,7 @@
     }
 
     // =========================================================================
-    // MÀN HÌNH 2: LOAD & CẬP NHẬT DỮ LIỆU GIẢI ĐẤU
+    // MÀN HÌNH 2: LOAD & CẬP NHẬT DỮ LIỆU GIẢI ĐẤU (AUTO-SYNC MỖI 5 PHÚT)
     // =========================================================================
     async function selectTournament(maGiaiDau, pushUrl = true) {
       currentMaGiaiDau = maGiaiDau;
@@ -295,33 +291,54 @@
 
       await fetchTournamentData(true);
 
-      // Tự động cập nhật ngầm mỗi 15 giây cho màn hình TV
+      // Tự động load data mới sau mỗi 5 phút (300.000 ms), giữ nguyên tab đang xem
       if (refreshInterval) clearInterval(refreshInterval);
-      refreshInterval = setInterval(() => fetchTournamentData(false), 15000);
+      refreshInterval = setInterval(() => fetchTournamentData(false), 5 * 60 * 1000);
+    }
+
+    function manualRefreshData() {
+      fetchTournamentData(false);
     }
 
     async function fetchTournamentData(isInitial) {
-      if (!currentMaGiaiDau) return;
+      if (!currentMaGiaiDau || isFetching) return;
+      isFetching = true;
+
+      const refreshIcon = document.getElementById('refresh-icon');
+      const refreshBtn = document.getElementById('btn-refresh-data');
+      if (refreshIcon) refreshIcon.classList.add('animate-spin');
+      if (refreshBtn) refreshBtn.classList.add('opacity-75');
+
       try {
         const res = await fetch(`${GAS_WEB_APP_URL}?action=getTournamentData&maGiaiDau=${encodeURIComponent(currentMaGiaiDau)}`);
         const json = await res.json();
         if (json.status !== 'success') throw new Error(json.message);
 
-        tournamentData = json.data;
-        updateHeaderInfo();
-        buildNavigationMenu(isInitial);
+        // Kiểm tra xem dữ liệu có thay đổi không (nếu không đổi khi auto-refresh thì không cần re-render lại DOM)
+        const newDataStr = JSON.stringify(json.data);
+        const oldDataStr = tournamentData ? JSON.stringify(tournamentData) : '';
 
-        if (isInitial) {
-          document.getElementById('board-loading').classList.add('hidden');
-          document.getElementById('board-content').classList.remove('hidden');
+        if (isInitial || newDataStr !== oldDataStr) {
+          tournamentData = json.data;
+          updateHeaderInfo();
+          buildNavigationMenu(isInitial);
+
+          if (isInitial) {
+            document.getElementById('board-loading').classList.add('hidden');
+            document.getElementById('board-content').classList.remove('hidden');
+          }
+          renderActiveTab();
         }
-        renderActiveTab();
       } catch (err) {
         console.error('Lỗi đồng bộ dữ liệu:', err);
         if (isInitial) {
           document.getElementById('board-loading').innerHTML =
             `<div class="text-red-600 font-bold text-xl">Không thể tải dữ liệu giải đấu: ${err.message}</div>`;
         }
+      } finally {
+        isFetching = false;
+        if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+        if (refreshBtn) refreshBtn.classList.remove('opacity-75');
       }
     }
 
@@ -335,13 +352,12 @@
 
     function buildNavigationMenu(isInitial) {
       const matches = tournamentData.matches || [];
-      // Lấy danh sách các vòng duy nhất có trong TranThiDau của giải
       const uniqueRounds = [...new Set(matches.map(m => m.Vong).filter(Boolean))];
 
-      // Sắp xếp vòng theo thứ tự chuẩn
+      // Sắp xếp chuẩn: Vòng bảng -> Tứ kết -> Bán kết -> Chung kết -> Seri B
       uniqueRounds.sort((a, b) => {
-        const idxA = ROUND_ORDER.indexOf(a);
-        const idxB = ROUND_ORDER.indexOf(b);
+        const idxA = ROUND_ORDER.findIndex(r => r.toLowerCase() === a.trim().toLowerCase());
+        const idxB = ROUND_ORDER.findIndex(r => r.toLowerCase() === b.trim().toLowerCase());
         if (idxA === -1 && idxB === -1) return a.localeCompare(b);
         if (idxA === -1) return 1;
         if (idxB === -1) return -1;
@@ -350,7 +366,7 @@
 
       const tabs = [...uniqueRounds, 'THANH_TICH'];
 
-      // Nếu là lần đầu load hoặc tab hiện tại không còn tồn tại, chọn tab đầu tiên
+      // Giữ nguyên tab hiện tại khi auto-refresh; chỉ chọn mặc định khi mới vào giải
       if (isInitial || !tabs.includes(activeTab)) {
         activeTab = uniqueRounds.length > 0 ? uniqueRounds[0] : 'THANH_TICH';
       }
@@ -358,15 +374,15 @@
       const navEl = document.getElementById('rounds-nav');
       navEl.innerHTML = tabs.map(tab => {
         const isAch = tab === 'THANH_TICH';
-        const label = isAch ? '<i class="fa-solid fa-trophy text-amber-400 mr-1.5"></i>Thành tích' : tab;
+        const label = isAch ? '<i class="fa-solid fa-trophy text-amber-400 mr-1"></i>Thành tích' : tab;
         const isActive = activeTab === tab;
         const activeClass = isActive
-          ? 'bg-emerald-500 text-slate-950 font-black shadow-md scale-105'
+          ? 'bg-emerald-500 text-slate-950 font-extrabold shadow'
           : 'bg-white/10 hover:bg-white/20 text-white font-semibold';
 
         return `
           <button onclick="switchTab('${tab}')"
-                  class="px-4 py-2 rounded-xl text-sm md:text-base transition-all whitespace-nowrap ${activeClass}">
+                  class="px-2.5 py-1.5 rounded-lg text-xs md:text-sm transition-all whitespace-nowrap cursor-pointer ${activeClass}">
             ${label}
           </button>
         `;
@@ -393,13 +409,12 @@
       } else if (activeTab.toLowerCase().includes('chung kết')) {
         renderFinalRoundView(container, activeTab);
       } else {
-        // Tứ kết, Bán kết, hoặc các vòng loại trực tiếp khác
         renderKnockoutRoundView(container, activeTab);
       }
     }
 
     // =========================================================================
-    // HELPER: TẠO MAP ĐỘI THI ĐẤU & FORMAT DỮ LIỆU
+    // HELPER: LẤY BIỆT DANH VĐV (FALLBACK HỌ TÊN) & XỬ LÝ WRAP TEXT
     // =========================================================================
     function getTeamsMap() {
       const map = {};
@@ -409,22 +424,28 @@
       return map;
     }
 
+    function getPlayerDisplayName(vdvObj) {
+      if (!vdvObj) return '';
+      const nick = (vdvObj.BietDanh || '').trim();
+      const full = (vdvObj.HoTen || '').trim();
+      return nick || full;
+    }
+
     function getTeamPlayersDisplay(teamObj) {
       if (!teamObj) {
         return `<span class="italic text-slate-400 font-semibold">Chờ kết quả</span>`;
       }
-      const p1 = teamObj.VDV1 ? teamObj.VDV1.HoTen : '';
-      const p2 = teamObj.VDV2 ? teamObj.VDV2.HoTen : '';
-      if (!p1 && !p2) return `<span class="font-bold">${teamObj.TenDoi || 'Chờ kết quả'}</span>`;
+      const p1 = getPlayerDisplayName(teamObj.VDV1);
+      const p2 = getPlayerDisplayName(teamObj.VDV2);
+      if (!p1 && !p2) return `<span class="font-bold break-words">${teamObj.TenDoi || 'Chờ kết quả'}</span>`;
       return `
-        <div class="leading-tight">
-          <div class="truncate">${p1}</div>
-          ${p2 ? `<div class="truncate">${p2}</div>` : ''}
+        <div class="leading-snug space-y-0.5 break-words whitespace-normal">
+          <div>${p1}</div>
+          ${p2 ? `<div>${p2}</div>` : ''}
         </div>
       `;
     }
 
-    // Parse chuỗi "dd/mm/yyyy HH:mm" để sắp xếp thời gian
     function parseVNDateTime(str) {
       if (!str) return 0;
       const parts = str.trim().split(/\s+/);
@@ -443,7 +464,7 @@
     }
 
     // =========================================================================
-    // COMPONENT: THẺ TRẬN ĐẤU (DÙNG CHUNG CHO CÁC VÒNG)
+    // COMPONENT: THẺ TRẬN ĐẤU
     // =========================================================================
     function renderMatchCard(match, teamsMap, isLargeFinal = false) {
       const team1 = teamsMap[match.MaDoiThu1];
@@ -454,7 +475,6 @@
       const isLive = status === 'Đang thi đấu';
       const isReady = status === 'Chuẩn bị thi đấu';
 
-      // Màu khung theo trạng thái
       let cardClass = 'match-waiting';
       let badgeClass = 'bg-slate-200 text-slate-700';
       if (isLive) {
@@ -468,14 +488,12 @@
         badgeClass = 'bg-sky-100 text-sky-800';
       }
 
-      // Điểm tỷ số
       const rawS1 = match.DiemTySoDoiThu1;
       const rawS2 = match.DiemTySoDoiThu2;
       const hasScore = rawS1 !== '' || rawS2 !== '';
       const numS1 = parseFloat(rawS1);
       const numS2 = parseFloat(rawS2);
 
-      // Xác định đội thắng (cao điểm hơn -> xanh lá)
       let t1Win = false, t2Win = false;
       if (hasScore && !isNaN(numS1) && !isNaN(numS2)) {
         if (numS1 > numS2) t1Win = true;
@@ -487,11 +505,9 @@
       const s1Color = t1Win ? 'text-emerald-600' : 'text-slate-800';
       const s2Color = t2Win ? 'text-emerald-600' : 'text-slate-800';
 
-      // Hiệu số hiển thị nhỏ bên dưới tỷ số
       const diff1 = match.HieuSoDoiThu1 !== '' ? `(${Number(match.HieuSoDoiThu1) > 0 ? '+' : ''}${match.HieuSoDoiThu1})` : '';
       const diff2 = match.HieuSoDoiThu2 !== '' ? `(${Number(match.HieuSoDoiThu2) > 0 ? '+' : ''}${match.HieuSoDoiThu2})` : '';
 
-      // Nếu chưa thi đấu (Chờ thi đấu / Chuẩn bị thi đấu) mà chưa có điểm thì để trống tỷ số
       const showScore = isFinished || isLive || hasScore;
       const score1Display = showScore && rawS1 !== '' ? rawS1 : '';
       const score2Display = showScore && rawS2 !== '' ? rawS2 : '';
@@ -502,19 +518,19 @@
 
       return `
         <div class="${cardClass} ${padClass} transition-all flex flex-col justify-between">
-          <!-- Hàng trên: Trạng thái góc trái - Thông tin Sân/Giờ ở giữa - Mã trận góc phải -->
-          <div class="flex items-center justify-between gap-2 mb-2.5 pb-1.5 border-b border-black/10 text-xs">
-            <span class="px-2.5 py-0.5 rounded-md font-bold uppercase tracking-wide ${badgeClass}">
+          <!-- Hàng trên: Trạng thái - Sân/Giờ/Trọng tài - Mã trận -->
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-1.5 border-b border-black/10 text-xs">
+            <span class="px-2.5 py-0.5 rounded-md font-bold uppercase tracking-wide shrink-0 ${badgeClass}">
               ${isLive ? '<i class="fa-solid fa-circle text-[8px] mr-1"></i>' : ''}${status}
             </span>
 
-            <div class="flex flex-wrap items-center justify-center gap-3 text-slate-600 font-semibold ${isLargeFinal ? 'text-base' : 'text-xs'}">
+            <div class="flex flex-wrap items-center justify-center gap-2.5 text-slate-600 font-semibold ${isLargeFinal ? 'text-base' : 'text-xs'}">
               ${match.SanThiDau ? `<span class="bg-white/80 px-2 py-0.5 rounded border border-slate-200 text-sky-800 font-bold"><i class="fa-solid fa-location-dot mr-1 text-red-500"></i>${match.SanThiDau}</span>` : ''}
               ${match.NgayGioThiDau ? `<span><i class="fa-regular fa-clock mr-1"></i>${match.NgayGioThiDau}</span>` : ''}
               ${match.TenTrongTai ? `<span><i class="fa-solid fa-user-tie mr-1"></i>TT: ${match.TenTrongTai}</span>` : ''}
             </div>
 
-            <span class="text-[11px] font-mono font-bold text-slate-400 bg-black/5 px-2 py-0.5 rounded">
+            <span class="text-[11px] font-mono font-bold text-slate-400 bg-black/5 px-2 py-0.5 rounded shrink-0">
               #${match.MaTran || ''}
             </span>
           </div>
@@ -522,25 +538,25 @@
           <!-- Hàng chính: Đội 1 (Trái) - Tỷ số (Giữa) - Đội 2 (Phải) -->
           <div class="grid grid-cols-12 items-center gap-2">
             <!-- Đội 1 -->
-            <div class="col-span-5 text-left ${nameSize} ${t1Color}">
+            <div class="col-span-5 text-left min-w-0 ${nameSize} ${t1Color}">
               ${getTeamPlayersDisplay(team1)}
             </div>
 
             <!-- Tỷ số & Hiệu số -->
-            <div class="col-span-2 flex items-center justify-center gap-2 bg-white/90 rounded-xl py-1.5 px-2 shadow-inner border border-slate-200/80">
-              <div class="text-center min-w-[28px]">
+            <div class="col-span-2 flex items-center justify-center gap-1.5 bg-white/90 rounded-xl py-1.5 px-1.5 shadow-inner border border-slate-200/80 shrink-0">
+              <div class="text-center min-w-[24px]">
                 <div class="${scoreSize} font-black leading-none ${s1Color}">${score1Display}</div>
                 ${showScore && diff1 ? `<div class="text-[11px] font-bold text-slate-500 mt-1">${diff1}</div>` : ''}
               </div>
-              <div class="text-slate-400 font-black text-lg">:</div>
-              <div class="text-center min-w-[28px]">
+              <div class="text-slate-400 font-black text-base">:</div>
+              <div class="text-center min-w-[24px]">
                 <div class="${scoreSize} font-black leading-none ${s2Color}">${score2Display}</div>
                 ${showScore && diff2 ? `<div class="text-[11px] font-bold text-slate-500 mt-1">${diff2}</div>` : ''}
               </div>
             </div>
 
             <!-- Đội 2 -->
-            <div class="col-span-5 text-right ${nameSize} ${t2Color}">
+            <div class="col-span-5 text-right min-w-0 ${nameSize} ${t2Color}">
               ${getTeamPlayersDisplay(team2)}
             </div>
           </div>
@@ -549,14 +565,13 @@
     }
 
     // =========================================================================
-    // VIEW 1: VÒNG BẢNG (CHIA ĐÔI MÀN HÌNH: TRÁI BẢNG ĐIỂM - PHẢI 2 NỬA TRẬN ĐẤU)
+    // VIEW 1: VÒNG BẢNG
     // =========================================================================
     function renderGroupStageView(container) {
       const teams = tournamentData.teams || [];
       const groupMatches = (tournamentData.matches || []).filter(m => m.Vong && m.Vong.toLowerCase() === 'vòng bảng');
       const teamsMap = getTeamsMap();
 
-      // 1. Tính toán thống kê từng đội trong vòng bảng
       const statsMap = {};
       teams.forEach(t => {
         statsMap[t.MaDoi] = {
@@ -588,7 +603,6 @@
         }
       });
 
-      // Gom nhóm theo BangThiDau
       const groups = {};
       Object.values(statsMap).forEach(item => {
         const grpName = item.team.BangThiDau || 'Khác';
@@ -598,7 +612,6 @@
 
       const sortedGroupNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
 
-      // Tự động sắp xếp trong từng bảng: Điểm cao trước -> Hiệu số cao trước
       sortedGroupNames.forEach(gName => {
         groups[gName].sort((a, b) => {
           if (b.points !== a.points) return b.points - a.points;
@@ -606,35 +619,33 @@
         });
       });
 
-      // Linh hoạt chia cột nếu có nhiều bảng (1-2 bảng: 1 cột, >=3 bảng: 2 cột)
       const gridColsClass = sortedGroupNames.length >= 3 ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1';
 
       const groupsHtml = sortedGroupNames.map(gName => {
         const rowsHtml = groups[gName].map((st, idx) => {
-          // Tự động tô màu xanh lá nhạt cho 2 đội cao nhất mỗi bảng
           const isTop2 = idx < 2;
           const rowBg = isTop2 ? 'bg-emerald-100/90 hover:bg-emerald-200/80 font-semibold' : 'bg-white hover:bg-slate-50';
           const badgeRank = isTop2
             ? `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-600 text-white text-xs font-black">${idx + 1}</span>`
             : `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-200 text-slate-700 text-xs font-bold">${idx + 1}</span>`;
 
-          const p1 = st.team.VDV1 ? st.team.VDV1.HoTen : '';
-          const p2 = st.team.VDV2 ? st.team.VDV2.HoTen : '';
+          const p1 = getPlayerDisplayName(st.team.VDV1);
+          const p2 = getPlayerDisplayName(st.team.VDV2);
 
           return `
             <tr class="${rowBg} border-b border-slate-200 transition">
-              <td class="py-2.5 px-2 text-center">${badgeRank}</td>
-              <td class="py-2.5 px-2">
+              <td class="py-2.5 px-2 text-center align-middle">${badgeRank}</td>
+              <td class="py-2.5 px-2 align-middle break-words whitespace-normal">
                 <div class="text-slate-900 font-bold text-sm leading-snug">${p1}</div>
                 ${p2 ? `<div class="text-slate-700 font-semibold text-sm leading-snug">${p2}</div>` : ''}
               </td>
-              <td class="py-2.5 px-2 text-center font-mono font-bold text-slate-700 text-sm">
+              <td class="py-2.5 px-2 text-center align-middle font-mono font-bold text-slate-700 text-sm whitespace-nowrap">
                 ${st.played}/${st.totalMatches}
               </td>
-              <td class="py-2.5 px-2 text-center font-black text-base text-sky-700">
+              <td class="py-2.5 px-2 text-center align-middle font-black text-base text-sky-700 whitespace-nowrap">
                 ${st.points}
               </td>
-              <td class="py-2.5 px-2 text-center font-bold text-sm ${st.diff > 0 ? 'text-emerald-700' : (st.diff < 0 ? 'text-rose-600' : 'text-slate-600')}">
+              <td class="py-2.5 px-2 text-center align-middle font-bold text-sm whitespace-nowrap ${st.diff > 0 ? 'text-emerald-700' : (st.diff < 0 ? 'text-rose-600' : 'text-slate-600')}">
                 ${st.diff > 0 ? '+' : ''}${st.diff}
               </td>
             </tr>
@@ -647,17 +658,16 @@
               <h3 class="text-xl font-black text-white tracking-wide uppercase">
                 <i class="fa-solid fa-layer-group mr-2 text-amber-300"></i>BẢNG ${gName}
               </h3>
-              <span class="text-xs font-bold bg-white/20 text-white px-2.5 py-1 rounded-full">Top 2 đi tiếp</span>
             </div>
             <div class="overflow-x-auto">
-              <table class="w-full text-left border-collapse">
+              <table class="w-full text-left border-collapse table-fixed">
                 <thead>
                   <tr class="bg-slate-100 text-slate-600 text-xs uppercase font-extrabold border-b border-slate-300">
                     <th class="py-2 px-2 text-center w-10">#</th>
                     <th class="py-2 px-2">Vận động viên</th>
-                    <th class="py-2 px-2 text-center w-16">Trận</th>
-                    <th class="py-2 px-2 text-center w-16">Điểm</th>
-                    <th class="py-2 px-2 text-center w-16">HS</th>
+                    <th class="py-2 px-2 text-center w-14">Trận</th>
+                    <th class="py-2 px-2 text-center w-14">Điểm</th>
+                    <th class="py-2 px-2 text-center w-14">HS</th>
                   </tr>
                 </thead>
                 <tbody>${rowsHtml}</tbody>
@@ -667,7 +677,6 @@
         `;
       }).join('');
 
-      // 2. Phân loại trận đấu bên phải (Nửa trên: Đã thi đấu | Nửa dưới: Đang / Chuẩn bị / Chờ)
       const finishedMatches = groupMatches
         .filter(m => (m.TrangThai || '').trim() === 'Đã thi đấu')
         .sort((a, b) => parseVNDateTime(b.ThoiGianKetThuc) - parseVNDateTime(a.ThoiGianKetThuc));
@@ -731,18 +740,16 @@
     }
 
     // =========================================================================
-    // VIEW 2: CÁC VÒNG LOẠI TRỰC TIẾP (TỨ KẾT, BÁN KẾT... CHIA 2/3 TRÁI - 1/3 PHẢI)
+    // VIEW 2: CÁC VÒNG LOẠI TRỰC TIẾP (TỨ KẾT, BÁN KẾT...)
     // =========================================================================
     function renderKnockoutRoundView(container, roundName) {
       const teamsMap = getTeamsMap();
       const roundMatches = (tournamentData.matches || []).filter(m => m.Vong === roundName);
 
-      // Bên trái (2/3): Tất cả các trận trong vòng đó
       const allMatchesSorted = [...roundMatches].sort((a, b) => {
         return parseVNDateTime(a.NgayGioThiDau) - parseVNDateTime(b.NgayGioThiDau);
       });
 
-      // Bên phải (1/3): Chỉ các trận "Đang thi đấu" và "Chuẩn bị thi đấu" (Ưu tiên Đang thi đấu trên cùng)
       const priority = { 'Đang thi đấu': 1, 'Chuẩn bị thi đấu': 2 };
       const activeMatches = roundMatches
         .filter(m => ['Đang thi đấu', 'Chuẩn bị thi đấu'].includes((m.TrangThai || '').trim()))
@@ -754,7 +761,7 @@
 
       container.innerHTML = `
         <div class="h-full grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <!-- BÊN TRÁI (2/3 màn hình = 8/12): TẤT CẢ TRẬN TRONG VÒNG -->
+          <!-- BÊN TRÁI (2/3 màn hình = 8/12) -->
           <div class="lg:col-span-8 h-full bg-slate-100/80 rounded-2xl border border-slate-300 p-4 flex flex-col overflow-hidden">
             <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-300 shrink-0">
               <h2 class="text-xl font-black text-slate-900 uppercase">
@@ -768,7 +775,7 @@
             </div>
           </div>
 
-          <!-- BÊN PHẢI (1/3 màn hình = 4/12): ĐANG THI ĐẤU & CHUẨN BỊ THI ĐẤU -->
+          <!-- BÊN PHẢI (1/3 màn hình = 4/12) -->
           <div class="lg:col-span-4 h-full bg-gradient-to-b from-emerald-50 to-amber-50/50 rounded-2xl border-2 border-emerald-200 p-4 flex flex-col overflow-hidden">
             <div class="flex items-center justify-between mb-3 pb-2 border-b border-emerald-200 shrink-0">
               <h2 class="text-lg font-black text-emerald-950 uppercase">
@@ -786,7 +793,7 @@
     }
 
     // =========================================================================
-    // VIEW 3: VÒNG CHUNG KẾT (TOÀN MÀN HÌNH, TO RÕ, TRANG TRỌNG)
+    // VIEW 3: VÒNG CHUNG KẾT
     // =========================================================================
     function renderFinalRoundView(container, roundName) {
       const teamsMap = getTeamsMap();
@@ -813,7 +820,7 @@
     }
 
     // =========================================================================
-    // VIEW 4: BỤC VINH QUANG THÀNH TÍCH (SERI A & SERI B)
+    // VIEW 4: BỤC VINH QUANG THÀNH TÍCH
     // =========================================================================
     function renderAchievementsView(container) {
       const teams = tournamentData.teams || [];
@@ -825,18 +832,20 @@
         const renderTeamPodiumCard = (team, rankType) => {
           const p1 = team.VDV1 || {};
           const p2 = team.VDV2 || {};
+          const name1 = getPlayerDisplayName(p1);
+          const name2 = getPlayerDisplayName(p2);
           const defaultAvatar = 'https://cdn-icons-png.flaticon.com/512/166/166344.png';
 
           let cardStyle = 'bg-white border-2 border-slate-200 shadow-lg';
           let ribbon = '';
           let imgSize = 'w-24 h-24 md:w-28 md:h-28';
-          let nameSize = 'text-lg md:text-xl';
+          let nameSize = 'text-base md:text-lg';
 
           if (rankType === 'CHAMP') {
             cardStyle = 'champion-card shadow-2xl';
             ribbon = `<div class="bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 font-black px-5 py-1.5 rounded-full text-sm md:text-base uppercase tracking-wider shadow inline-flex items-center gap-2 mb-4"><i class="fa-solid fa-trophy"></i> ${isSeriB ? 'Vô Địch Seri B' : 'Vô Địch'}</div>`;
             imgSize = 'w-28 h-28 md:w-36 md:h-36';
-            nameSize = 'text-xl md:text-2xl';
+            nameSize = 'text-lg md:text-2xl';
           } else if (rankType === 'SECOND') {
             cardStyle = 'bg-gradient-to-b from-slate-100 to-slate-200 border-2 border-slate-400 shadow-xl';
             ribbon = `<div class="bg-slate-600 text-white font-extrabold px-4 py-1 rounded-full text-xs md:text-sm uppercase tracking-wider shadow inline-flex items-center gap-1.5 mb-3"><i class="fa-solid fa-medal text-slate-200"></i> ${isSeriB ? 'Á Quân Seri B' : 'Á Quân'}</div>`;
@@ -848,21 +857,21 @@
           return `
             <div class="${cardStyle} rounded-3xl p-5 flex flex-col items-center text-center transition-all">
               ${ribbon}
-              <!-- Ảnh đại diện 2 VĐV to rõ -->
-              <div class="flex items-center justify-center gap-4 mb-4">
-                <div class="flex flex-col items-center">
+              <!-- Ảnh đại diện & Biệt danh 2 VĐV (tự động wrap text) -->
+              <div class="grid ${name2 ? 'grid-cols-2' : 'grid-cols-1'} gap-4 w-full items-start justify-items-center mb-3">
+                <div class="flex flex-col items-center w-full min-w-0">
                   <img src="${p1.HinhAnhDaiDien || defaultAvatar}" onerror="this.src='${defaultAvatar}'"
-                       class="${imgSize} rounded-full object-cover border-4 border-white shadow-md bg-slate-200">
-                  <span class="mt-2 font-black text-slate-900 ${nameSize}">${p1.HoTen || ''}</span>
+                       class="${imgSize} rounded-full object-cover border-4 border-white shadow-md bg-slate-200 shrink-0">
+                  <span class="mt-2 font-black text-slate-900 ${nameSize} leading-snug break-words w-full">${name1}</span>
                 </div>
-                ${p2.HoTen ? `
-                <div class="flex flex-col items-center">
+                ${name2 ? `
+                <div class="flex flex-col items-center w-full min-w-0">
                   <img src="${p2.HinhAnhDaiDien || defaultAvatar}" onerror="this.src='${defaultAvatar}'"
-                       class="${imgSize} rounded-full object-cover border-4 border-white shadow-md bg-slate-200">
-                  <span class="mt-2 font-black text-slate-900 ${nameSize}">${p2.HoTen}</span>
+                       class="${imgSize} rounded-full object-cover border-4 border-white shadow-md bg-slate-200 shrink-0">
+                  <span class="mt-2 font-black text-slate-900 ${nameSize} leading-snug break-words w-full">${name2}</span>
                 </div>` : ''}
               </div>
-              ${team.TenDoi ? `<div class="text-xs font-bold text-slate-500 uppercase tracking-wider">${team.TenDoi}</div>` : ''}
+              ${team.TenDoi ? `<div class="text-xs font-bold text-slate-500 uppercase tracking-wider break-words">${team.TenDoi}</div>` : ''}
             </div>
           `;
         };
@@ -873,14 +882,12 @@
               <i class="fa-solid fa-star text-amber-400 mr-2"></i>${title}<i class="fa-solid fa-star text-amber-400 ml-2"></i>
             </h2>
 
-            <!-- Bục 1: Vô địch (Nổi bật ở trên cùng) -->
             ${champList.length ? `
               <div class="flex flex-wrap justify-center gap-6 mb-6">
                 ${champList.map(t => `<div class="w-full max-w-xl">${renderTeamPodiumCard(t, 'CHAMP')}</div>`).join('')}
               </div>
             ` : ''}
 
-            <!-- Bục 2 & 3: Á quân và Hạng ba (Tự động co giãn linh hoạt 1 hoặc 2 đội) -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-${Math.min(4, runnerUpList.length + thirdList.length) || 2} gap-5 max-w-7xl mx-auto">
               ${runnerUpList.map(t => renderTeamPodiumCard(t, 'SECOND')).join('')}
               ${thirdList.map(t => renderTeamPodiumCard(t, 'THIRD')).join('')}
@@ -889,7 +896,6 @@
         `;
       };
 
-      // Lọc danh sách theo cột ThanhTich
       const byAch = (val) => teams.filter(t => (t.ThanhTich || '').trim().toLowerCase() === val.toLowerCase());
 
       const mainHtml = renderPodiumBlock(
