@@ -58,6 +58,34 @@
       background: #ffffff;
       border: 1px solid #e2e8f0;
     }
+
+    /* Hiệu ứng sóng âm khi nút loa đang đọc */
+    @keyframes speakerPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.15); }
+    }
+    .speaker-active {
+      background-color: #0284c7 !important;
+      color: #ffffff !important;
+      border-color: #0369a1 !important;
+      box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35);
+      animation: speakerPulse 1s infinite ease-in-out;
+    }
+
+    /* Hiệu ứng trượt lên cho popup thông báo loa */
+    @keyframes slideUpFade {
+      from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+    .speech-toast-enter {
+      animation: slideUpFade 0.22s ease-out forwards;
+    }
   </style>
 </head>
 <body class="h-screen flex flex-col select-none">
@@ -155,11 +183,45 @@
     </div>
   </div>
 
+  <!-- ==================== POPUP NHỎ GÓC DƯỚI BÊN PHẢI: NỘI DUNG PHÁT LOA ==================== -->
+  <div id="speech-announcement-popup"
+       class="fixed bottom-4 right-4 left-4 sm:left-auto z-[60] sm:w-[450px] md:w-[500px] bg-white rounded-2xl shadow-2xl border-2 border-sky-500 overflow-hidden hidden speech-toast-enter">
+    <!-- Header popup loa -->
+    <div class="bg-gradient-to-r from-sky-800 via-sky-700 to-emerald-700 text-white px-4 py-2.5 flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+          <i class="fa-solid fa-volume-high text-amber-300 animate-pulse text-xs"></i>
+        </span>
+        <div class="min-w-0">
+          <div class="text-xs md:text-sm font-black uppercase tracking-wide truncate">Thông báo phát loa</div>
+          <div id="speech-popup-subtitle" class="text-[11px] text-sky-100 font-medium truncate"></div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button type="button" id="btn-toggle-voice-engine" onclick="switchSpeechEngineMode()"
+                title="Chuyển đổi nguồn giọng đọc tiếng Việt"
+                class="px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-[10px] font-bold text-amber-200 border border-white/20 transition cursor-pointer">
+          Giọng Việt
+        </button>
+        <button type="button" onclick="stopAnnouncement()" title="Tắt phát loa"
+                class="w-7 h-7 rounded-lg bg-white/15 hover:bg-rose-600 text-white flex items-center justify-center text-sm font-bold transition cursor-pointer">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Nội dung hệ thống đang đọc -->
+    <div id="speech-popup-body"
+         class="p-3.5 max-h-56 overflow-y-auto text-sm leading-relaxed text-slate-700 bg-sky-50/40 select-text">
+    </div>
+  </div>
+
   <script>
     // =========================================================================
     // CẤU HÌNH API GOOGLE APPS SCRIPT (THAY LINK CỦA BẠN VÀO ĐÂY)
     // =========================================================================
-    const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbw8xU6EaqNoXTZFZu3K_sGiwr5KVo5wz0myYM7njzPXh2olrx-pC9-wakwb7VhFPrMQlA/exec';
+    const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzZztGJJ8m20Ki2UraP-luF2zWj87KvODrreu_qGvO0UkPCoqPeY3FXxQPQ8St9I2EJ5Q/exec';
 
     let currentMaGiaiDau = null;
     let tournamentData = null;
@@ -167,6 +229,14 @@
     let refreshInterval = null;
     let isFetching = false;
     let currentModalTeamId = null;
+
+    // Biến điều khiển phát âm thanh thông báo tiếng Việt (TTS)
+    let speakingMatchIdx = null;
+    let speechSessionId = 0;
+    let speechPauseTimer = null;
+    let currentAudioObj = null;
+    let preferredVoiceEngine = 'auto'; // 'auto' | 'online' | 'native'
+    const ttsAudioCache = new Map();
 
     const ROUND_ORDER = [
       'Vòng bảng',
@@ -183,6 +253,11 @@
     // =========================================================================
     window.addEventListener('DOMContentLoaded', () => {
       startClock();
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.getVoices();
+        window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+      }
+
       const urlParams = new URLSearchParams(window.location.search);
       const giaiParam = urlParams.get('giai');
 
@@ -194,6 +269,7 @@
     });
 
     window.addEventListener('popstate', () => {
+      stopAnnouncement();
       closeTeamMatchesModal();
       const urlParams = new URLSearchParams(window.location.search);
       const giaiParam = urlParams.get('giai');
@@ -205,9 +281,14 @@
     });
 
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && currentModalTeamId) {
-        closeTeamMatchesModal();
+      if (e.key === 'Escape') {
+        if (speakingMatchIdx !== null) stopAnnouncement();
+        if (currentModalTeamId) closeTeamMatchesModal();
       }
+    });
+
+    window.addEventListener('beforeunload', () => {
+      stopAnnouncement();
     });
 
     function startClock() {
@@ -221,6 +302,7 @@
     }
 
     function showSelectorScreen() {
+      stopAnnouncement();
       closeTeamMatchesModal();
       if (refreshInterval) clearInterval(refreshInterval);
       currentMaGiaiDau = null;
@@ -234,6 +316,424 @@
       url.searchParams.delete('giai');
       window.history.pushState({}, '', url);
       showSelectorScreen();
+    }
+
+    // =========================================================================
+    // HỆ THỐNG PHÁT ÂM THANH TIẾNG VIỆT (TỰ ĐỘNG CHỌN GIỌNG VIỆT CHUẨN)
+    // =========================================================================
+    function getBestVietnameseNativeVoice() {
+      if (!('speechSynthesis' in window)) return null;
+      const voices = window.speechSynthesis.getVoices() || [];
+      const viVoices = voices.filter(v =>
+        (v.lang && /^vi([-_]|$)/i.test(v.lang.trim())) ||
+        (v.name && /(vietnam|tiếng việt|tieng viet|hoaimy|namminh)/i.test(v.name))
+      );
+      if (viVoices.length === 0) return null;
+
+      return (
+        viVoices.find(v => /google|natural|hoaimy|namminh|linh/i.test(v.name)) ||
+        viVoices[0]
+      );
+    }
+
+    function resolveVoiceEngine() {
+      const nativeVi = getBestVietnameseNativeVoice();
+      if (preferredVoiceEngine === 'online') return { type: 'online', voice: null };
+      if (preferredVoiceEngine === 'native' && nativeVi) return { type: 'native', voice: nativeVi };
+      // Mặc định 'auto': Chỉ dùng giọng thiết bị khi thực sự có giọng tiếng Việt; nếu không dùng Giọng Việt Online
+      if (nativeVi) return { type: 'native', voice: nativeVi };
+      return { type: 'online', voice: null };
+    }
+
+    function switchSpeechEngineMode() {
+      const currentIdx = speakingMatchIdx;
+      const nativeVi = getBestVietnameseNativeVoice();
+      if (preferredVoiceEngine === 'online') {
+        preferredVoiceEngine = nativeVi ? 'native' : 'online';
+      } else {
+        preferredVoiceEngine = 'online';
+      }
+      if (currentIdx !== null) {
+        stopAnnouncement();
+        toggleMatchAnnouncement(currentIdx);
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function showAnnouncementPopup(match, segments, engineType) {
+      const popup = document.getElementById('speech-announcement-popup');
+      const subtitleEl = document.getElementById('speech-popup-subtitle');
+      const bodyEl = document.getElementById('speech-popup-body');
+      const engineBtn = document.getElementById('btn-toggle-voice-engine');
+      if (!popup || !bodyEl) return;
+
+      const subParts = [
+        match.Vong,
+        match.LuotTran,
+        match.SanThiDau,
+        match.MaTran ? `#${match.MaTran}` : ''
+      ].filter(Boolean);
+      subtitleEl.textContent = subParts.join(' • ');
+
+      if (engineBtn) {
+        engineBtn.textContent = engineType === 'online' ? 'Giọng Việt Online' : 'Giọng Việt Thiết bị';
+      }
+
+      bodyEl.innerHTML = segments.map((seg, idx) => {
+        const displayText = seg.displayText !== undefined ? seg.displayText : seg.text;
+        const baseWeight = seg.emphasis ? 'font-bold text-slate-900' : 'font-normal text-slate-700';
+        return `<span data-seg-idx="${idx}" class="speech-seg transition-colors duration-150 rounded px-0.5 ${baseWeight}">${escapeHtml(displayText)}</span>`;
+      }).join(' ');
+
+      popup.classList.remove('hidden');
+      bodyEl.scrollTop = 0;
+    }
+
+    function highlightActiveSpeechSegment(activeIdx) {
+      const bodyEl = document.getElementById('speech-popup-body');
+      if (!bodyEl) return;
+      bodyEl.querySelectorAll('.speech-seg').forEach(span => {
+        const idx = parseInt(span.getAttribute('data-seg-idx'), 10);
+        if (idx === activeIdx) {
+          span.classList.add('bg-sky-200/90', 'text-sky-950');
+          const spanTop = span.offsetTop;
+          const spanBottom = spanTop + span.offsetHeight;
+          if (spanBottom > bodyEl.scrollTop + bodyEl.clientHeight || spanTop < bodyEl.scrollTop) {
+            bodyEl.scrollTo({ top: Math.max(0, spanTop - 24), behavior: 'smooth' });
+          }
+        } else {
+          span.classList.remove('bg-sky-200/90', 'text-sky-950');
+        }
+      });
+    }
+
+    function hideAnnouncementPopup() {
+      const popup = document.getElementById('speech-announcement-popup');
+      if (popup) popup.classList.add('hidden');
+    }
+
+    function updateSpeakerButtonsUI() {
+      document.querySelectorAll('.btn-speaker-match').forEach(btn => {
+        const idx = parseInt(btn.getAttribute('data-match-idx'), 10);
+        const icon = btn.querySelector('i');
+        if (speakingMatchIdx !== null && idx === speakingMatchIdx) {
+          btn.classList.add('speaker-active');
+          btn.title = 'Dừng phát thông báo';
+          if (icon) icon.className = 'fa-solid fa-stop';
+        } else {
+          btn.classList.remove('speaker-active');
+          btn.title = 'Phát loa thông báo trận đấu';
+          if (icon) icon.className = 'fa-solid fa-volume-high';
+        }
+      });
+    }
+
+    function stopAnnouncement() {
+      speechSessionId++;
+      if (speechPauseTimer) {
+        clearTimeout(speechPauseTimer);
+        speechPauseTimer = null;
+      }
+      if (currentAudioObj) {
+        try {
+          currentAudioObj.pause();
+          currentAudioObj.src = '';
+        } catch (e) {}
+        currentAudioObj = null;
+      }
+      if ('speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch (e) {}
+      }
+      speakingMatchIdx = null;
+      updateSpeakerButtonsUI();
+      hideAnnouncementPopup();
+    }
+
+    function toggleMatchAnnouncement(matchIdx) {
+      if (speakingMatchIdx === matchIdx) {
+        stopAnnouncement();
+        return;
+      }
+
+      const match = (tournamentData && tournamentData.matches) ? tournamentData.matches[matchIdx] : null;
+      if (!match) return;
+
+      stopAnnouncement();
+      speakingMatchIdx = matchIdx;
+      updateSpeakerButtonsUI();
+
+      const engine = resolveVoiceEngine();
+      const segments = buildMatchSpeechSegments(match);
+      showAnnouncementPopup(match, segments, engine.type);
+
+      if (engine.type === 'native' && engine.voice) {
+        playNativeVietnameseSegments(segments, engine.voice, speechSessionId);
+      } else {
+        playOnlineVietnameseSegments(segments, speechSessionId);
+      }
+    }
+
+    function formatPairSpeechPhrase(teamObj, fallbackNote = '') {
+      if (!teamObj) {
+        return (fallbackNote || '').trim() || 'đội chưa xác định';
+      }
+      const p1 = getPlayerDisplayName(teamObj.VDV1);
+      const p2 = getPlayerDisplayName(teamObj.VDV2);
+      if (p1 && p2) {
+        return `cặp vận động viên ${p1} và ${p2}`;
+      }
+      if (p1) {
+        return `vận động viên ${p1}`;
+      }
+      return (teamObj.TenDoi || fallbackNote || '').trim() || 'đội chưa xác định';
+    }
+
+    function formatCourtSpeechText(sanRaw) {
+      const s = (sanRaw || '').trim();
+      if (!s) return 'sân thi đấu';
+      if (/^\d+$/.test(s)) return `Sân ${s}`;
+      return s;
+    }
+
+    function buildMatchSpeechSegments(match) {
+      const teamsMap = getTeamsMap();
+      const team1 = teamsMap[match.MaDoiThu1];
+      const team2 = teamsMap[match.MaDoiThu2];
+
+      const status = (match.TrangThai || 'Chờ thi đấu').trim();
+      const vongRaw = (match.Vong || '').trim();
+      const isGroupStage = vongRaw.toLowerCase() === 'vòng bảng';
+      const luotRaw = (match.LuotTran || '').trim();
+      const sanText = formatCourtSpeechText(match.SanThiDau);
+
+      const bangRaw = ((team1 && team1.BangThiDau) || (team2 && team2.BangThiDau) || '').trim();
+      const bangText = bangRaw ? (/^bảng\b/i.test(bangRaw) ? bangRaw : `Bảng ${bangRaw}`) : '';
+
+      const refName = (match.TenTrongTai || '').trim();
+
+      // KỊCH BẢN 3 & 4: TRẬN ĐÃ THI ĐẤU
+      if (status === 'Đã thi đấu') {
+        const s1 = parseFloat(match.DiemTySoDoiThu1);
+        const s2 = parseFloat(match.DiemTySoDoiThu2);
+        const p1 = parseFloat(match.DiemDoiThu1);
+        const p2 = parseFloat(match.DiemDoiThu2);
+
+        let team1Won = true;
+        if (!isNaN(s1) && !isNaN(s2) && s1 !== s2) {
+          team1Won = s1 > s2;
+        } else if (!isNaN(p1) && !isNaN(p2) && p1 !== p2) {
+          team1Won = p1 > p2;
+        }
+
+        const winTeam = team1Won ? team1 : team2;
+        const winFallback = team1Won ? match.GhiChu1 : match.GhiChu2;
+        const loseTeam = team1Won ? team2 : team1;
+        const loseFallback = team1Won ? match.GhiChu2 : match.GhiChu1;
+
+        const winScore = team1Won ? (match.DiemTySoDoiThu1 || '0') : (match.DiemTySoDoiThu2 || '0');
+        const loseScore = team1Won ? (match.DiemTySoDoiThu2 || '0') : (match.DiemTySoDoiThu1 || '0');
+
+        const winPhrase = formatPairSpeechPhrase(winTeam, winFallback);
+        const losePhrase = formatPairSpeechPhrase(loseTeam, loseFallback);
+
+        const matchTitleParts = [vongRaw, luotRaw].filter(Boolean).join(', ');
+        const matchTitleDisplay = [vongRaw, luotRaw].filter(Boolean).join(' - ');
+
+        const segs = [
+          { text: 'Ban tổ chức xin thông báo kết quả trận', pauseAfter: 120 },
+          { text: matchTitleParts || 'thi đấu', displayText: matchTitleDisplay || 'thi đấu', emphasis: true, pauseAfter: 160 },
+          { text: 'vừa kết thúc tại', pauseAfter: 120 },
+          { text: sanText, emphasis: true, pauseAfter: isGroupStage && bangText ? 140 : 320 }
+        ];
+
+        if (isGroupStage && bangText) {
+          segs.push({ text: 'thuộc', pauseAfter: 100 });
+          segs.push({ text: `${bangText}:`, emphasis: true, pauseAfter: 320 });
+        }
+
+        segs.push(
+          { text: 'Cặp vận động viên', pauseAfter: 100 },
+          { text: winPhrase.replace(/^(cặp )?vận động viên\s+/i, ''), emphasis: true, pauseAfter: 200 },
+          { text: 'đã giành chiến thắng trước', pauseAfter: 140 },
+          { text: losePhrase, emphasis: true, pauseAfter: 200 },
+          { text: 'với tỷ số chung cuộc là', pauseAfter: 180 },
+          { text: `${winScore}`, displayText: `${winScore} –`, emphasis: true, pauseAfter: 220 },
+          { text: `${loseScore}.`, emphasis: true, pauseAfter: 360 },
+          { text: 'Xin chúc mừng các vận động viên.', pauseAfter: 0 }
+        );
+
+        return segs;
+      }
+
+      // KỊCH BẢN 1 & 2: CHUẨN BỊ THI ĐẤU, CHỜ THI ĐẤU, ĐANG THI ĐẤU
+      const team1Phrase = formatPairSpeechPhrase(team1, match.GhiChu1);
+      const team2Phrase = formatPairSpeechPhrase(team2, match.GhiChu2);
+
+      const roundParts = [];
+      if (vongRaw) roundParts.push(vongRaw);
+      if (isGroupStage && bangText) roundParts.push(bangText);
+      if (luotRaw) roundParts.push(luotRaw);
+
+      const segs = [
+        { text: 'Ban tổ chức xin thông báo!', pauseAfter: 340 },
+        { text: 'Mời các vận động viên có tên sau đây khẩn trương di chuyển vào khu vực sân thi đấu để chuẩn bị cho trận đấu tiếp theo:', pauseAfter: 300 },
+        { text: 'Tại', pauseAfter: 110 },
+        { text: sanText, emphasis: true, pauseAfter: 150 },
+        { text: 'sẽ diễn ra', pauseAfter: 120 },
+        { text: `${roundParts.join(', ') || 'trận đấu tiếp theo'}.`, displayText: `${roundParts.join(' - ') || 'trận đấu tiếp theo'}.`, emphasis: true, pauseAfter: 340 },
+        { text: 'Xin mời', pauseAfter: 110 },
+        { text: team1Phrase, emphasis: true, pauseAfter: 200 },
+        { text: 'thi đấu với', pauseAfter: 140 },
+        { text: `${team2Phrase}.`, emphasis: true, pauseAfter: 360 }
+      ];
+
+      if (refName) {
+        segs.push(
+          { text: 'Trận đấu này sẽ do trọng tài', pauseAfter: 120 },
+          { text: refName, emphasis: true, pauseAfter: 130 },
+          { text: 'điều hành.', pauseAfter: 360 }
+        );
+      }
+
+      segs.push(
+        { text: 'Xin nhắc lại, xin mời', pauseAfter: 140 },
+        { text: team1Phrase, emphasis: true, pauseAfter: 160 },
+        { text: 'và', pauseAfter: 110 },
+        { text: team2Phrase, emphasis: true, pauseAfter: 200 },
+        { text: 'nhanh chóng có mặt tại', pauseAfter: 110 },
+        { text: sanText, emphasis: true, pauseAfter: 160 },
+        { text: 'để làm thủ tục thi đấu.', pauseAfter: 320 },
+        { text: 'Xin cảm ơn.', pauseAfter: 0 }
+      );
+
+      return segs;
+    }
+
+    // Phát bằng giọng tiếng Việt có sẵn trên thiết bị
+    function playNativeVietnameseSegments(segments, viVoice, sessionId) {
+      let index = 0;
+
+      const speakNext = () => {
+        if (sessionId !== speechSessionId) return;
+        if (index >= segments.length) {
+          stopAnnouncement();
+          return;
+        }
+
+        const currentIdx = index;
+        const seg = segments[index++];
+        highlightActiveSpeechSegment(currentIdx);
+
+        const utterance = new SpeechSynthesisUtterance(seg.text);
+        utterance.voice = viVoice;
+        utterance.lang = viVoice.lang || 'vi-VN';
+
+        utterance.rate = seg.emphasis ? 0.87 : 0.94;
+        utterance.pitch = seg.emphasis ? 1.05 : 1.0;
+        utterance.volume = 1.0;
+
+        utterance.onend = () => {
+          if (sessionId !== speechSessionId) return;
+          if (seg.pauseAfter > 0) {
+            speechPauseTimer = setTimeout(speakNext, seg.pauseAfter);
+          } else {
+            speakNext();
+          }
+        };
+
+        utterance.onerror = () => {
+          if (sessionId !== speechSessionId) return;
+          // Nếu giọng thiết bị gặp lỗi, tự động chuyển sang Giọng Việt Online
+          playOnlineVietnameseSegments(segments.slice(currentIdx), sessionId);
+        };
+
+        window.speechSynthesis.speak(utterance);
+      };
+
+      speakNext();
+    }
+
+    // Tải âm thanh MP3 giọng Việt chuẩn từ Apps Script (có cache & tải trước)
+    async function fetchVietnameseAudioDataUrl(text) {
+      const key = text.trim();
+      if (ttsAudioCache.has(key)) {
+        return ttsAudioCache.get(key);
+      }
+      const res = await fetch(`${GAS_WEB_APP_URL}?action=tts&text=${encodeURIComponent(key)}`);
+      const json = await res.json();
+      if (json.status !== 'success' || !json.audioBase64) {
+        throw new Error(json.message || 'Lỗi tạo âm thanh');
+      }
+      const dataUrl = `data:${json.mimeType || 'audio/mpeg'};base64,${json.audioBase64}`;
+      ttsAudioCache.set(key, dataUrl);
+      return dataUrl;
+    }
+
+    // Phát tuần tự các đoạn bằng Giọng Việt Online (tải trước đoạn kế tiếp để đọc mượt)
+    function playOnlineVietnameseSegments(segments, sessionId) {
+      const engineBtn = document.getElementById('btn-toggle-voice-engine');
+      if (engineBtn) engineBtn.textContent = 'Giọng Việt Online';
+
+      let index = 0;
+
+      const playNext = async () => {
+        if (sessionId !== speechSessionId) return;
+        if (index >= segments.length) {
+          stopAnnouncement();
+          return;
+        }
+
+        const currentIdx = index;
+        const seg = segments[index++];
+        highlightActiveSpeechSegment(currentIdx);
+
+        // Tải trước câu tiếp theo song song để không bị trễ nhịp
+        if (index < segments.length) {
+          fetchVietnameseAudioDataUrl(segments[index].text).catch(() => {});
+        }
+
+        try {
+          const dataUrl = await fetchVietnameseAudioDataUrl(seg.text);
+          if (sessionId !== speechSessionId) return;
+
+          const audio = new Audio(dataUrl);
+          currentAudioObj = audio;
+          audio.playbackRate = seg.emphasis ? 0.92 : 0.98;
+
+          audio.onended = () => {
+            if (sessionId !== speechSessionId) return;
+            currentAudioObj = null;
+            if (seg.pauseAfter > 0) {
+              speechPauseTimer = setTimeout(playNext, seg.pauseAfter);
+            } else {
+              playNext();
+            }
+          };
+
+          audio.onerror = () => {
+            if (sessionId !== speechSessionId) return;
+            playNext();
+          };
+
+          await audio.play();
+        } catch (err) {
+          console.error('Lỗi phát âm thanh tiếng Việt:', err);
+          if (sessionId === speechSessionId) {
+            stopAnnouncement();
+          }
+        }
+      };
+
+      playNext();
     }
 
     // =========================================================================
@@ -308,6 +808,7 @@
     // MÀN HÌNH 2: LOAD & CẬP NHẬT DỮ LIỆU GIẢI ĐẤU (AUTO-SYNC MỖI 5 PHÚT)
     // =========================================================================
     async function selectTournament(maGiaiDau, pushUrl = true) {
+      stopAnnouncement();
       currentMaGiaiDau = maGiaiDau;
       if (pushUrl) {
         const url = new URL(window.location);
@@ -322,7 +823,6 @@
 
       await fetchTournamentData(true);
 
-      // Tự động load data mới sau mỗi 5 phút, giữ nguyên tab đang xem
       if (refreshInterval) clearInterval(refreshInterval);
       refreshInterval = setInterval(() => fetchTournamentData(false), 5 * 60 * 1000);
     }
@@ -345,6 +845,12 @@
         const json = await res.json();
         if (json.status !== 'success') throw new Error(json.message);
 
+        if (json.data && Array.isArray(json.data.matches)) {
+          json.data.matches.forEach((m, idx) => {
+            m._idx = idx;
+          });
+        }
+
         const newDataStr = JSON.stringify(json.data);
         const oldDataStr = tournamentData ? JSON.stringify(tournamentData) : '';
 
@@ -362,6 +868,7 @@
           if (currentModalTeamId) {
             openTeamMatchesModal(currentModalTeamId);
           }
+          updateSpeakerButtonsUI();
         }
       } catch (err) {
         console.error('Lỗi đồng bộ dữ liệu:', err);
@@ -433,6 +940,7 @@
       activeTab = tab;
       buildNavigationMenu(false);
       renderActiveTab();
+      updateSpeakerButtonsUI();
     }
 
     function renderActiveTab() {
@@ -510,6 +1018,7 @@
         : '<div class="text-center text-slate-400 py-12 text-lg font-semibold">Đội này chưa có trận thi đấu nào trong giải</div>';
 
       document.getElementById('team-matches-modal').classList.remove('hidden');
+      updateSpeakerButtonsUI();
     }
 
     function closeTeamMatchesModal() {
@@ -564,10 +1073,6 @@
         .replace(/\b0+(\d+)\b/g, '$1');
     }
 
-    /**
-     * Sinh các từ khóa nhận diện từ MaTran & Vong của 1 trận đấu
-     * Ví dụ: MaTran = "TK1", Vong = "Tứ kết" -> ["tk1", "tk 1", "tu ket 1"]
-     */
     function getMatchAliases(match) {
       const aliases = new Set();
       const normCode = normalizeViText(match.MaTran);
@@ -619,10 +1124,6 @@
       return [...aliases].filter(Boolean);
     }
 
-    /**
-     * Tìm vị trí (index) của trận nguồn trong danh sách `srcMatches`
-     * khớp với nội dung Ghi chú (`GhiChu1`/`GhiChu2`) hoặc mã đội (`MaDoiThu1`/`MaDoiThu2`)
-     */
     function findSourceMatchIndex(noteText, targetTeamId, srcMatches) {
       const normNote = normalizeViText(noteText);
       if (normNote) {
@@ -637,7 +1138,6 @@
         }
       }
 
-      // Dự phòng: khớp theo đội thi đấu nếu đã điền MaDoiThu1/2 ở vòng sau
       if (targetTeamId) {
         for (let i = 0; i < srcMatches.length; i++) {
           if (srcMatches[i].MaDoiThu1 === targetTeamId || srcMatches[i].MaDoiThu2 === targetTeamId) {
@@ -748,7 +1248,7 @@
     }
 
     // =========================================================================
-    // COMPONENT: THẺ TRẬN ĐẤU
+    // COMPONENT: THẺ TRẬN ĐẤU (CÓ NÚT LOA PHÁT THÔNG BÁO)
     // =========================================================================
     function renderMatchCard(match, teamsMap, isLargeFinal = false, isGroupStage = false, showRoundBadge = false) {
       const team1 = teamsMap[match.MaDoiThu1];
@@ -807,9 +1307,13 @@
       const nameSize = isLargeFinal ? 'text-2xl md:text-3xl' : 'text-sm md:text-base';
       const scoreSize = isLargeFinal ? 'text-5xl md:text-6xl' : 'text-2xl md:text-3xl';
 
+      const matchIdx = match._idx !== undefined ? match._idx : -1;
+      const isSpeaking = speakingMatchIdx !== null && speakingMatchIdx === matchIdx;
+      const speakerBtnSize = isLargeFinal ? 'w-10 h-10 text-base' : 'w-7 h-7 text-xs';
+
       return `
         <div class="${cardClass} ${padClass} transition-all flex flex-col justify-between">
-          <!-- Hàng trên: Trạng thái, Vòng, Bảng, Lượt trận - Sân/Giờ/Trọng tài - Mã trận -->
+          <!-- Hàng trên: Trạng thái, Vòng, Bảng, Lượt trận - Sân/Giờ/Trọng tài - Nút Loa & Mã trận -->
           <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-1.5 border-b border-black/10 text-xs">
             <div class="flex flex-wrap items-center gap-1.5 shrink-0">
               <span class="px-2.5 py-0.5 rounded-md font-bold uppercase tracking-wide ${badgeClass}">
@@ -826,9 +1330,18 @@
               ${match.TenTrongTai ? `<span><i class="fa-solid fa-user-tie mr-1"></i>TT: ${match.TenTrongTai}</span>` : ''}
             </div>
 
-            <span class="text-[11px] font-mono font-bold text-slate-400 bg-black/5 px-2 py-0.5 rounded shrink-0">
-              #${match.MaTran || ''}
-            </span>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button type="button"
+                      data-match-idx="${matchIdx}"
+                      onclick="event.stopPropagation(); toggleMatchAnnouncement(${matchIdx})"
+                      title="${isSpeaking ? 'Dừng phát thông báo' : 'Phát loa thông báo trận đấu'}"
+                      class="btn-speaker-match ${speakerBtnSize} ${isSpeaking ? 'speaker-active' : ''} rounded-full bg-white hover:bg-sky-600 text-sky-700 hover:text-white border border-sky-300 shadow-sm flex items-center justify-center transition cursor-pointer">
+                <i class="fa-solid ${isSpeaking ? 'fa-stop' : 'fa-volume-high'}"></i>
+              </button>
+              <span class="text-[11px] font-mono font-bold text-slate-400 bg-black/5 px-2 py-0.5 rounded">
+                #${match.MaTran || ''}
+              </span>
+            </div>
           </div>
 
           <!-- Hàng chính: Đội 1 (Trái) - Tỷ số (Giữa) - Đội 2 (Phải) -->
@@ -1289,7 +1802,6 @@
         return;
       }
 
-      // Sắp xếp tự nhiên theo số trong MaTran (TK1, TK2, TK3, TK4...) -> Lượt -> Giờ
       const sortMatchesForBracket = (arr) => {
         return [...arr].sort((a, b) => {
           const numA = parseLuotNumber(a.MaTran);
@@ -1308,8 +1820,6 @@
         });
       };
 
-      // Căn chỉnh thứ tự các trận ở vòng trước dựa trên Ghi chú (VD: Thắng Tứ kết 1, Thắng Tứ kết 3 -> Bán kết 1)
-      // để các cặp nhánh gặp nhau nằm thẳng hàng và không bị đan chéo đường nối
       const alignTrackStages = (stages) => {
         if (stages.length <= 1) return stages;
         const aligned = stages.map(s => ({ ...s, matches: [...s.matches] }));
@@ -1333,7 +1843,6 @@
             }
           });
 
-          // Giữ lại các trận chưa được tham chiếu (nếu có) theo thứ tự tự nhiên
           leftMatches.forEach((m, idx) => {
             if (!usedIndices.has(idx)) {
               ordered.push(m);
@@ -1346,7 +1855,6 @@
         return aligned;
       };
 
-      // 1. Nhóm trận Vòng bảng
       const groupMatches = matches
         .filter(m => (m.Vong || '').trim().toLowerCase() === 'vòng bảng')
         .sort((a, b) => {
@@ -1358,7 +1866,6 @@
           return parseVNDateTime(a.NgayGioThiDau) - parseVNDateTime(b.NgayGioThiDau);
         });
 
-      // 2. Các vòng loại trực tiếp nhánh chính (Seri A)
       const mainStageNames = ['Tứ kết', 'Bán kết', 'Chung kết'];
       const mainStages = mainStageNames
         .map(name => ({
@@ -1379,7 +1886,6 @@
         }));
       const allMainStages = alignTrackStages([...extraStages, ...mainStages]);
 
-      // 3. Các vòng loại trực tiếp nhánh Seri B
       const seriBStageNames = ['Tứ kết Seri B', 'Bán kết Seri B', 'Chung kết Seri B'];
       const seriBStages = alignTrackStages(
         seriBStageNames
@@ -1390,7 +1896,6 @@
           .filter(s => s.matches.length > 0)
       );
 
-      // Vẽ SVG đường nối động dựa trên mapping thực tế từ GhiChu1/GhiChu2 -> MaTran
       const renderConnectorSvg = (leftMatches, rightMatches, strokeColor = '#10b981') => {
         const leftCount = leftMatches.length;
         const rightCount = rightMatches.length;
@@ -1405,7 +1910,6 @@
             if (s1 !== -1) edges.push({ srcIdx: s1, dstIdx, slot: 1 });
             if (s2 !== -1 && s2 !== s1) edges.push({ srcIdx: s2, dstIdx, slot: 2 });
           } else if (leftCount === rightCount * 2) {
-            // Dự phòng nếu chưa ghi GhiChu1/GhiChu2
             edges.push({ srcIdx: 2 * dstIdx, dstIdx, slot: 1 });
             edges.push({ srcIdx: 2 * dstIdx + 1, dstIdx, slot: 2 });
           }
@@ -1416,7 +1920,6 @@
           edges.forEach((edge, idx) => {
             const yLeft = ((2 * edge.srcIdx + 1) / (2 * leftCount)) * 100;
             const yRightCenter = ((2 * edge.dstIdx + 1) / (2 * rightCount)) * 100;
-            // Nếu 1 trận đích nhận nhiều nguồn, tách nhẹ điểm chạm trên/dưới để nhìn rõ nhánh 1 và nhánh 2
             const peers = edges.filter(e => e.dstIdx === edge.dstIdx);
             let yRight = yRightCenter;
             if (peers.length > 1) {

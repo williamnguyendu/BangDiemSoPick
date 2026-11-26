@@ -4,7 +4,7 @@
 const DB_CONFIG = {
   MAIN_ID: '1L4waVVXo2c9WTqylub1f_ie7lbullQMGP1UhLUOadGU',   // VanDongVien, GiaiDau, LichSuThiDau, LichSuDiemTrinh
   TOUR_ID: '1Bu6gAleRUwKfsa9zMsf4oVe5zALnn8X-RNAK8QhA8zc',   // DoiThiDau, TranThiDau
-  REF_ID:  '1MkCPS63R1Znb2dz-kV9mdzUreh8ovoNqNKxWNacz0Oc'    // TrongTai
+  REF_ID:  '1MkCPS63R1Znb2dz-kV9mdzUreh8ovoNqNKxWNacz0Oc'    // TrongTai, TrongTaiGiaiDau
 };
 
 /**
@@ -27,6 +27,10 @@ function doGet(e) {
         status: 'success',
         data: getTournamentDetails(maGiaiDau)
       };
+    } else if (action === 'tts') {
+      const text = (e && e.parameter && e.parameter.text) ? String(e.parameter.text).trim() : '';
+      if (!text) throw new Error('Thiếu nội dung text');
+      result = getVietnameseTtsAudio(text);
     } else {
       result = { status: 'error', message: 'Action không hợp lệ' };
     }
@@ -37,6 +41,30 @@ function doGet(e) {
   return ContentService
     .createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Tạo file âm thanh MP3 giọng đọc tiếng Việt chuẩn từ văn bản
+ */
+function getVietnameseTtsAudio(text) {
+  const cleanText = String(text || '').trim().slice(0, 200);
+  const url = 'https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=' + encodeURIComponent(cleanText);
+  const response = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true,
+    headers: {
+      'User-Agent': 'Mozilla/5.0'
+    }
+  });
+  const code = response.getResponseCode();
+  if (code !== 200) {
+    throw new Error('Không tạo được âm thanh tiếng Việt (HTTP ' + code + ')');
+  }
+  const blob = response.getBlob();
+  return {
+    status: 'success',
+    audioBase64: Utilities.base64Encode(blob.getBytes()),
+    mimeType: 'audio/mpeg'
+  };
 }
 
 /**
@@ -112,7 +140,6 @@ function getTournamentDetails(maGiaiDau) {
   const allTeams = getSheetDataAsObjects(ssTour, 'DoiThiDau');
   const teams = allTeams.filter(d => d.MaGiaiDau === maGiaiDau);
 
-  // Thu thập danh sách MaSoVDV có trong giải để chỉ load thông tin cần thiết
   const neededVdvIds = new Set();
   teams.forEach(t => {
     if (t.MaSoVDV1) neededVdvIds.add(t.MaSoVDV1);
