@@ -185,7 +185,7 @@
 
   <!-- ==================== POPUP NHỎ GÓC DƯỚI BÊN PHẢI: NỘI DUNG PHÁT LOA ==================== -->
   <div id="speech-announcement-popup"
-       class="fixed bottom-4 right-4 left-4 sm:left-auto z-[60] sm:w-[450px] md:w-[500px] bg-white rounded-2xl shadow-2xl border-2 border-sky-500 overflow-hidden hidden speech-toast-enter">
+       class="fixed bottom-4 right-4 left-4 sm:left-auto z-[60] sm:w-[460px] md:w-[520px] bg-white rounded-2xl shadow-2xl border-2 border-sky-500 overflow-hidden hidden speech-toast-enter">
     <!-- Header popup loa -->
     <div class="bg-gradient-to-r from-sky-800 via-sky-700 to-emerald-700 text-white px-4 py-2.5 flex items-center justify-between gap-2">
       <div class="flex items-center gap-2 min-w-0">
@@ -199,13 +199,23 @@
       </div>
 
       <div class="flex items-center gap-1.5 shrink-0">
-        <button type="button" id="btn-toggle-voice-engine" onclick="switchSpeechEngineMode()"
-                title="Chuyển đổi nguồn giọng đọc tiếng Việt"
-                class="px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-[10px] font-bold text-amber-200 border border-white/20 transition cursor-pointer">
-          Giọng Việt
-        </button>
+        <!-- Chọn tốc độ đọc -->
+        <select id="speech-rate-select" onchange="changeSpeechRate(this.value)" title="Tốc độ đọc"
+                class="bg-slate-900/60 text-white text-[10px] font-bold rounded-lg px-1.5 py-1 border border-white/20 cursor-pointer focus:outline-none">
+          <option value="0.90">Chậm</option>
+          <option value="0.98" selected>Vừa</option>
+          <option value="1.06">Nhanh</option>
+        </select>
+
+        <!-- Chọn giọng đọc tiếng Việt -->
+        <select id="speech-voice-select" onchange="changeSpeechVoice(this.value)" title="Chọn giọng đọc tiếng Việt"
+                class="bg-slate-900/60 text-amber-200 text-[10px] font-bold rounded-lg px-1.5 py-1 border border-white/20 max-w-[135px] truncate cursor-pointer focus:outline-none">
+          <option value="auto">Giọng Miền Nam</option>
+        </select>
+
+        <!-- Nút tắt chủ động -->
         <button type="button" onclick="stopAnnouncement()" title="Tắt phát loa"
-                class="w-7 h-7 rounded-lg bg-white/15 hover:bg-rose-600 text-white flex items-center justify-center text-sm font-bold transition cursor-pointer">
+                class="w-7 h-7 rounded-lg bg-white/15 hover:bg-rose-600 text-white flex items-center justify-center text-sm font-bold transition shrink-0 cursor-pointer">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
@@ -213,7 +223,7 @@
 
     <!-- Nội dung hệ thống đang đọc -->
     <div id="speech-popup-body"
-         class="p-3.5 max-h-56 overflow-y-auto text-sm leading-relaxed text-slate-700 bg-sky-50/40 select-text">
+         class="p-3.5 max-h-56 overflow-y-auto text-sm leading-relaxed text-slate-700 bg-sky-50/40 select-text space-y-1.5">
     </div>
   </div>
 
@@ -235,7 +245,8 @@
     let speechSessionId = 0;
     let speechPauseTimer = null;
     let currentAudioObj = null;
-    let preferredVoiceEngine = 'auto'; // 'auto' | 'online' | 'native'
+    let selectedVoiceChoice = 'auto';
+    let selectedSpeechRate = 0.98;
     const ttsAudioCache = new Map();
 
     const ROUND_ORDER = [
@@ -254,8 +265,8 @@
     window.addEventListener('DOMContentLoaded', () => {
       startClock();
       if ('speechSynthesis' in window) {
-        window.speechSynthesis.getVoices();
-        window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+        populateVietnameseVoiceOptions();
+        window.speechSynthesis.onvoiceschanged = populateVietnameseVoiceOptions;
       }
 
       const urlParams = new URLSearchParams(window.location.search);
@@ -319,40 +330,130 @@
     }
 
     // =========================================================================
-    // HỆ THỐNG PHÁT ÂM THANH TIẾNG VIỆT (TỰ ĐỘNG CHỌN GIỌNG VIỆT CHUẨN)
+    // CHUẨN HÓA PHÁT ÂM TIẾNG VIỆT (BẢNG B -> BẢNG BÊ, BẢNG C -> BẢNG XÊ...)
     // =========================================================================
-    function getBestVietnameseNativeVoice() {
-      if (!('speechSynthesis' in window)) return null;
+    const VI_LETTER_PHONETICS = {
+      'A': 'a', 'Ă': 'á', 'Â': 'ớ', 'B': 'bê', 'C': 'xê', 'D': 'dê', 'Đ': 'đê',
+      'E': 'e', 'Ê': 'ê', 'G': 'gờ', 'H': 'hắt', 'I': 'i', 'K': 'ca', 'L': 'lờ',
+      'M': 'mờ', 'N': 'nờ', 'O': 'o', 'Ô': 'ô', 'Ơ': 'ơ', 'P': 'pê', 'Q': 'quy',
+      'R': 'rờ', 'S': 'sờ', 'T': 'tê', 'U': 'u', 'Ư': 'ư', 'V': 'vê', 'X': 'ích-xì', 'Y': 'y'
+    };
+
+    const VI_CONSONANT_PHONETICS = {
+      'B': 'bê', 'C': 'xê', 'D': 'dê', 'Đ': 'đê', 'G': 'gờ', 'H': 'hắt',
+      'K': 'ca', 'L': 'lờ', 'M': 'mờ', 'N': 'nờ', 'P': 'pê', 'Q': 'quy',
+      'R': 'rờ', 'S': 'sờ', 'T': 'tê', 'V': 'vê', 'X': 'ích-xì'
+    };
+
+    function normalizeTextForVietnameseSpeech(rawText) {
+      let text = String(rawText || '');
+
+      text = text.replace(/\b(Bảng)\s+([A-ZĂÂĐÊÔƠƯ])\b/gi, (_, prefix, letter) => {
+        const spoken = VI_LETTER_PHONETICS[letter.toUpperCase()] || letter;
+        return `${prefix} ${spoken}`;
+      });
+
+      text = text.replace(/\bSeri\s+([A-ZĂÂĐÊÔƠƯ])\b/gi, (_, letter) => {
+        const spoken = VI_LETTER_PHONETICS[letter.toUpperCase()] || letter;
+        return `Sê-ri ${spoken}`;
+      });
+      text = text.replace(/\bSeri\b/gi, 'Sê-ri');
+
+      text = text.replace(/(^|[\s,.;:()\-–])([BCDĐGHKLMNPQRSTVX])(?=$|[\s,.;:()\-–])/g, (_, sep, letter) => {
+        const spoken = VI_CONSONANT_PHONETICS[letter] || letter;
+        return `${sep}${spoken}`;
+      });
+
+      text = text
+        .replace(/\bPickleball\b/gi, 'Píc-cờ-bôn')
+        .replace(/\bVĐV\b/gi, 'vận động viên')
+        .replace(/\bVDV\b/gi, 'vận động viên')
+        .replace(/\bBTC\b/gi, 'ban tổ chức')
+        .replace(/\bCLB\b/gi, 'câu lạc bộ');
+
+      return text;
+    }
+
+    // =========================================================================
+    // HỆ THỐNG GIỌNG ĐỌC MIỀN NAM & POPUP THÔNG BÁO
+    // =========================================================================
+    function getVietnameseNativeVoices() {
+      if (!('speechSynthesis' in window)) return [];
       const voices = window.speechSynthesis.getVoices() || [];
-      const viVoices = voices.filter(v =>
+      return voices.filter(v =>
         (v.lang && /^vi([-_]|$)/i.test(v.lang.trim())) ||
         (v.name && /(vietnam|tiếng việt|tieng viet|hoaimy|namminh)/i.test(v.name))
       );
+    }
+
+    function getBestSouthernVietnameseVoice() {
+      const viVoices = getVietnameseNativeVoices();
       if (viVoices.length === 0) return null;
 
       return (
-        viVoices.find(v => /google|natural|hoaimy|namminh|linh/i.test(v.name)) ||
+        viVoices.find(v => /hoaimy|linh|south|mien nam|miền nam/i.test(v.name)) ||
+        viVoices.find(v => /natural|online|google/i.test(v.name)) ||
         viVoices[0]
       );
     }
 
+    function populateVietnameseVoiceOptions() {
+      const selectEl = document.getElementById('speech-voice-select');
+      if (!selectEl) return;
+
+      const viVoices = getVietnameseNativeVoices();
+      const prevVal = selectedVoiceChoice;
+
+      let optionsHtml = `<option value="auto">Tự động (Ưu tiên Miền Nam)</option>`;
+      viVoices.forEach(v => {
+        const isSouth = /hoaimy|linh|south/i.test(v.name);
+        const cleanName = v.name
+          .replace(/Microsoft\s+/i, '')
+          .replace(/\s+Online\s+\(Natural\)\s+-\s+Vietnamese\s+\(Vietnam\)/i, '')
+          .replace(/\s+-\s+Vietnamese\s+\(Vietnam\)/i, '');
+        const label = isSouth ? `${cleanName} (Miền Nam)` : cleanName;
+        optionsHtml += `<option value="native:${escapeHtml(v.name)}">${escapeHtml(label)}</option>`;
+      });
+      optionsHtml += `<option value="online">Giọng Việt Online</option>`;
+
+      selectEl.innerHTML = optionsHtml;
+      if ([...selectEl.options].some(o => o.value === prevVal)) {
+        selectEl.value = prevVal;
+      } else {
+        selectEl.value = 'auto';
+        selectedVoiceChoice = 'auto';
+      }
+    }
+
     function resolveVoiceEngine() {
-      const nativeVi = getBestVietnameseNativeVoice();
-      if (preferredVoiceEngine === 'online') return { type: 'online', voice: null };
-      if (preferredVoiceEngine === 'native' && nativeVi) return { type: 'native', voice: nativeVi };
-      // Mặc định 'auto': Chỉ dùng giọng thiết bị khi thực sự có giọng tiếng Việt; nếu không dùng Giọng Việt Online
-      if (nativeVi) return { type: 'native', voice: nativeVi };
+      const viVoices = getVietnameseNativeVoices();
+      if (selectedVoiceChoice === 'online') {
+        return { type: 'online', voice: null };
+      }
+      if (selectedVoiceChoice.startsWith('native:')) {
+        const targetName = selectedVoiceChoice.slice(7);
+        const found = viVoices.find(v => v.name === targetName);
+        if (found) return { type: 'native', voice: found };
+      }
+      const bestSouth = getBestSouthernVietnameseVoice();
+      if (bestSouth) {
+        return { type: 'native', voice: bestSouth };
+      }
       return { type: 'online', voice: null };
     }
 
-    function switchSpeechEngineMode() {
+    function changeSpeechVoice(val) {
+      selectedVoiceChoice = val;
       const currentIdx = speakingMatchIdx;
-      const nativeVi = getBestVietnameseNativeVoice();
-      if (preferredVoiceEngine === 'online') {
-        preferredVoiceEngine = nativeVi ? 'native' : 'online';
-      } else {
-        preferredVoiceEngine = 'online';
+      if (currentIdx !== null) {
+        stopAnnouncement();
+        toggleMatchAnnouncement(currentIdx);
       }
+    }
+
+    function changeSpeechRate(val) {
+      selectedSpeechRate = parseFloat(val) || 0.98;
+      const currentIdx = speakingMatchIdx;
       if (currentIdx !== null) {
         stopAnnouncement();
         toggleMatchAnnouncement(currentIdx);
@@ -367,12 +468,13 @@
         .replace(/"/g, '&quot;');
     }
 
-    function showAnnouncementPopup(match, segments, engineType) {
+    function showAnnouncementPopup(match, sentences) {
       const popup = document.getElementById('speech-announcement-popup');
       const subtitleEl = document.getElementById('speech-popup-subtitle');
       const bodyEl = document.getElementById('speech-popup-body');
-      const engineBtn = document.getElementById('btn-toggle-voice-engine');
       if (!popup || !bodyEl) return;
+
+      populateVietnameseVoiceOptions();
 
       const subParts = [
         match.Vong,
@@ -382,34 +484,31 @@
       ].filter(Boolean);
       subtitleEl.textContent = subParts.join(' • ');
 
-      if (engineBtn) {
-        engineBtn.textContent = engineType === 'online' ? 'Giọng Việt Online' : 'Giọng Việt Thiết bị';
-      }
-
-      bodyEl.innerHTML = segments.map((seg, idx) => {
-        const displayText = seg.displayText !== undefined ? seg.displayText : seg.text;
-        const baseWeight = seg.emphasis ? 'font-bold text-slate-900' : 'font-normal text-slate-700';
-        return `<span data-seg-idx="${idx}" class="speech-seg transition-colors duration-150 rounded px-0.5 ${baseWeight}">${escapeHtml(displayText)}</span>`;
-      }).join(' ');
+      bodyEl.innerHTML = sentences.map((sent, idx) => `
+        <p data-sent-idx="${idx}"
+           class="speech-sent px-2 py-1 rounded-lg transition-colors duration-200 text-slate-700 font-medium">
+          ${escapeHtml(sent.displayText)}
+        </p>
+      `).join('');
 
       popup.classList.remove('hidden');
       bodyEl.scrollTop = 0;
     }
 
-    function highlightActiveSpeechSegment(activeIdx) {
+    function highlightActiveSpeechSentence(activeIdx) {
       const bodyEl = document.getElementById('speech-popup-body');
       if (!bodyEl) return;
-      bodyEl.querySelectorAll('.speech-seg').forEach(span => {
-        const idx = parseInt(span.getAttribute('data-seg-idx'), 10);
+      bodyEl.querySelectorAll('.speech-sent').forEach(p => {
+        const idx = parseInt(p.getAttribute('data-sent-idx'), 10);
         if (idx === activeIdx) {
-          span.classList.add('bg-sky-200/90', 'text-sky-950');
-          const spanTop = span.offsetTop;
-          const spanBottom = spanTop + span.offsetHeight;
-          if (spanBottom > bodyEl.scrollTop + bodyEl.clientHeight || spanTop < bodyEl.scrollTop) {
-            bodyEl.scrollTo({ top: Math.max(0, spanTop - 24), behavior: 'smooth' });
+          p.classList.add('bg-sky-200/85', 'text-sky-950', 'font-bold');
+          const top = p.offsetTop;
+          const bottom = top + p.offsetHeight;
+          if (bottom > bodyEl.scrollTop + bodyEl.clientHeight || top < bodyEl.scrollTop) {
+            bodyEl.scrollTo({ top: Math.max(0, top - 16), behavior: 'smooth' });
           }
         } else {
-          span.classList.remove('bg-sky-200/90', 'text-sky-950');
+          p.classList.remove('bg-sky-200/85', 'text-sky-950', 'font-bold');
         }
       });
     }
@@ -472,13 +571,13 @@
       updateSpeakerButtonsUI();
 
       const engine = resolveVoiceEngine();
-      const segments = buildMatchSpeechSegments(match);
-      showAnnouncementPopup(match, segments, engine.type);
+      const sentences = buildMatchSpeechSentences(match);
+      showAnnouncementPopup(match, sentences);
 
       if (engine.type === 'native' && engine.voice) {
-        playNativeVietnameseSegments(segments, engine.voice, speechSessionId);
+        playNativeVietnameseSentences(sentences, engine.voice, speechSessionId);
       } else {
-        playOnlineVietnameseSegments(segments, speechSessionId);
+        playOnlineVietnameseSentences(sentences, speechSessionId);
       }
     }
 
@@ -504,7 +603,7 @@
       return s;
     }
 
-    function buildMatchSpeechSegments(match) {
+    function buildMatchSpeechSentences(match) {
       const teamsMap = getTeamsMap();
       const team1 = teamsMap[match.MaDoiThu1];
       const team2 = teamsMap[match.MaDoiThu2];
@@ -519,6 +618,12 @@
       const bangText = bangRaw ? (/^bảng\b/i.test(bangRaw) ? bangRaw : `Bảng ${bangRaw}`) : '';
 
       const refName = (match.TenTrongTai || '').trim();
+
+      const makeSentence = (display, pauseAfter = 260) => ({
+        displayText: display,
+        speakText: normalizeTextForVietnameseSpeech(display),
+        pauseAfter
+      });
 
       // KỊCH BẢN 3 & 4: TRẬN ĐÃ THI ĐẤU
       if (status === 'Đã thi đấu') {
@@ -544,34 +649,18 @@
 
         const winPhrase = formatPairSpeechPhrase(winTeam, winFallback);
         const losePhrase = formatPairSpeechPhrase(loseTeam, loseFallback);
+        const winPairNames = winPhrase.replace(/^(cặp )?vận động viên\s+/i, '');
 
-        const matchTitleParts = [vongRaw, luotRaw].filter(Boolean).join(', ');
-        const matchTitleDisplay = [vongRaw, luotRaw].filter(Boolean).join(' - ');
+        const matchTitle = [vongRaw, luotRaw].filter(Boolean).join(' - ') || 'thi đấu';
+        const introLine = (isGroupStage && bangText)
+          ? `Ban tổ chức xin thông báo kết quả trận ${matchTitle}, vừa kết thúc tại ${sanText}, thuộc ${bangText}:`
+          : `Ban tổ chức xin thông báo kết quả trận ${matchTitle}, vừa kết thúc tại ${sanText}:`;
 
-        const segs = [
-          { text: 'Ban tổ chức xin thông báo kết quả trận', pauseAfter: 120 },
-          { text: matchTitleParts || 'thi đấu', displayText: matchTitleDisplay || 'thi đấu', emphasis: true, pauseAfter: 160 },
-          { text: 'vừa kết thúc tại', pauseAfter: 120 },
-          { text: sanText, emphasis: true, pauseAfter: isGroupStage && bangText ? 140 : 320 }
+        return [
+          makeSentence(introLine, 260),
+          makeSentence(`Cặp vận động viên ${winPairNames}, đã giành chiến thắng trước ${losePhrase}, với tỷ số chung cuộc là ${winScore} – ${loseScore}.`, 300),
+          makeSentence('Xin chúc mừng các vận động viên.', 0)
         ];
-
-        if (isGroupStage && bangText) {
-          segs.push({ text: 'thuộc', pauseAfter: 100 });
-          segs.push({ text: `${bangText}:`, emphasis: true, pauseAfter: 320 });
-        }
-
-        segs.push(
-          { text: 'Cặp vận động viên', pauseAfter: 100 },
-          { text: winPhrase.replace(/^(cặp )?vận động viên\s+/i, ''), emphasis: true, pauseAfter: 200 },
-          { text: 'đã giành chiến thắng trước', pauseAfter: 140 },
-          { text: losePhrase, emphasis: true, pauseAfter: 200 },
-          { text: 'với tỷ số chung cuộc là', pauseAfter: 180 },
-          { text: `${winScore}`, displayText: `${winScore} –`, emphasis: true, pauseAfter: 220 },
-          { text: `${loseScore}.`, emphasis: true, pauseAfter: 360 },
-          { text: 'Xin chúc mừng các vận động viên.', pauseAfter: 0 }
-        );
-
-        return segs;
       }
 
       // KỊCH BẢN 1 & 2: CHUẨN BỊ THI ĐẤU, CHỜ THI ĐẤU, ĐANG THI ĐẤU
@@ -582,69 +671,51 @@
       if (vongRaw) roundParts.push(vongRaw);
       if (isGroupStage && bangText) roundParts.push(bangText);
       if (luotRaw) roundParts.push(luotRaw);
+      const roundSummary = roundParts.join(' - ') || 'trận đấu tiếp theo';
 
-      const segs = [
-        { text: 'Ban tổ chức xin thông báo!', pauseAfter: 340 },
-        { text: 'Mời các vận động viên có tên sau đây khẩn trương di chuyển vào khu vực sân thi đấu để chuẩn bị cho trận đấu tiếp theo:', pauseAfter: 300 },
-        { text: 'Tại', pauseAfter: 110 },
-        { text: sanText, emphasis: true, pauseAfter: 150 },
-        { text: 'sẽ diễn ra', pauseAfter: 120 },
-        { text: `${roundParts.join(', ') || 'trận đấu tiếp theo'}.`, displayText: `${roundParts.join(' - ') || 'trận đấu tiếp theo'}.`, emphasis: true, pauseAfter: 340 },
-        { text: 'Xin mời', pauseAfter: 110 },
-        { text: team1Phrase, emphasis: true, pauseAfter: 200 },
-        { text: 'thi đấu với', pauseAfter: 140 },
-        { text: `${team2Phrase}.`, emphasis: true, pauseAfter: 360 }
+      const sentences = [
+        makeSentence('Ban tổ chức xin thông báo! Mời các vận động viên có tên sau đây, khẩn trương di chuyển vào khu vực sân thi đấu, để chuẩn bị cho trận đấu tiếp theo:', 260),
+        makeSentence(`Tại ${sanText}, sẽ diễn ra ${roundSummary}.`, 260),
+        makeSentence(`Xin mời ${team1Phrase}, thi đấu với ${team2Phrase}.`, 260)
       ];
 
       if (refName) {
-        segs.push(
-          { text: 'Trận đấu này sẽ do trọng tài', pauseAfter: 120 },
-          { text: refName, emphasis: true, pauseAfter: 130 },
-          { text: 'điều hành.', pauseAfter: 360 }
-        );
+        sentences.push(makeSentence(`Trận đấu này sẽ do trọng tài ${refName} điều hành.`, 260));
       }
 
-      segs.push(
-        { text: 'Xin nhắc lại, xin mời', pauseAfter: 140 },
-        { text: team1Phrase, emphasis: true, pauseAfter: 160 },
-        { text: 'và', pauseAfter: 110 },
-        { text: team2Phrase, emphasis: true, pauseAfter: 200 },
-        { text: 'nhanh chóng có mặt tại', pauseAfter: 110 },
-        { text: sanText, emphasis: true, pauseAfter: 160 },
-        { text: 'để làm thủ tục thi đấu.', pauseAfter: 320 },
-        { text: 'Xin cảm ơn.', pauseAfter: 0 }
+      sentences.push(
+        makeSentence(`Xin nhắc lại, xin mời ${team1Phrase}, và ${team2Phrase}, nhanh chóng có mặt tại ${sanText}, để làm thủ tục thi đấu.`, 240),
+        makeSentence('Xin cảm ơn.', 0)
       );
 
-      return segs;
+      return sentences;
     }
 
-    // Phát bằng giọng tiếng Việt có sẵn trên thiết bị
-    function playNativeVietnameseSegments(segments, viVoice, sessionId) {
+    function playNativeVietnameseSentences(sentences, viVoice, sessionId) {
       let index = 0;
 
       const speakNext = () => {
         if (sessionId !== speechSessionId) return;
-        if (index >= segments.length) {
+        if (index >= sentences.length) {
           stopAnnouncement();
           return;
         }
 
         const currentIdx = index;
-        const seg = segments[index++];
-        highlightActiveSpeechSegment(currentIdx);
+        const sent = sentences[index++];
+        highlightActiveSpeechSentence(currentIdx);
 
-        const utterance = new SpeechSynthesisUtterance(seg.text);
+        const utterance = new SpeechSynthesisUtterance(sent.speakText);
         utterance.voice = viVoice;
         utterance.lang = viVoice.lang || 'vi-VN';
-
-        utterance.rate = seg.emphasis ? 0.87 : 0.94;
-        utterance.pitch = seg.emphasis ? 1.05 : 1.0;
+        utterance.rate = selectedSpeechRate;
+        utterance.pitch = 1.02;
         utterance.volume = 1.0;
 
         utterance.onend = () => {
           if (sessionId !== speechSessionId) return;
-          if (seg.pauseAfter > 0) {
-            speechPauseTimer = setTimeout(speakNext, seg.pauseAfter);
+          if (sent.pauseAfter > 0) {
+            speechPauseTimer = setTimeout(speakNext, sent.pauseAfter);
           } else {
             speakNext();
           }
@@ -652,8 +723,7 @@
 
         utterance.onerror = () => {
           if (sessionId !== speechSessionId) return;
-          // Nếu giọng thiết bị gặp lỗi, tự động chuyển sang Giọng Việt Online
-          playOnlineVietnameseSegments(segments.slice(currentIdx), sessionId);
+          playOnlineVietnameseSentences(sentences.slice(currentIdx), sessionId);
         };
 
         window.speechSynthesis.speak(utterance);
@@ -662,7 +732,23 @@
       speakNext();
     }
 
-    // Tải âm thanh MP3 giọng Việt chuẩn từ Apps Script (có cache & tải trước)
+    function splitTextForOnlineTts(text, maxLen = 185) {
+      const clean = String(text || '').trim();
+      if (clean.length <= maxLen) return [clean];
+
+      const chunks = [];
+      let remaining = clean;
+      while (remaining.length > maxLen) {
+        let cutIdx = remaining.lastIndexOf(',', maxLen);
+        if (cutIdx < 40) cutIdx = remaining.lastIndexOf(' ', maxLen);
+        if (cutIdx < 20) cutIdx = maxLen;
+        chunks.push(remaining.slice(0, cutIdx + 1).trim());
+        remaining = remaining.slice(cutIdx + 1).trim();
+      }
+      if (remaining) chunks.push(remaining);
+      return chunks;
+    }
+
     async function fetchVietnameseAudioDataUrl(text) {
       const key = text.trim();
       if (ttsAudioCache.has(key)) {
@@ -678,42 +764,48 @@
       return dataUrl;
     }
 
-    // Phát tuần tự các đoạn bằng Giọng Việt Online (tải trước đoạn kế tiếp để đọc mượt)
-    function playOnlineVietnameseSegments(segments, sessionId) {
-      const engineBtn = document.getElementById('btn-toggle-voice-engine');
-      if (engineBtn) engineBtn.textContent = 'Giọng Việt Online';
+    function playOnlineVietnameseSentences(sentences, sessionId) {
+      const queue = [];
+      sentences.forEach((sent, sentIdx) => {
+        const subChunks = splitTextForOnlineTts(sent.speakText);
+        subChunks.forEach((chunk, cIdx) => {
+          queue.push({
+            sentIdx,
+            text: chunk,
+            pauseAfter: cIdx === subChunks.length - 1 ? sent.pauseAfter : 60
+          });
+        });
+      });
 
-      let index = 0;
+      let qIndex = 0;
 
       const playNext = async () => {
         if (sessionId !== speechSessionId) return;
-        if (index >= segments.length) {
+        if (qIndex >= queue.length) {
           stopAnnouncement();
           return;
         }
 
-        const currentIdx = index;
-        const seg = segments[index++];
-        highlightActiveSpeechSegment(currentIdx);
+        const item = queue[qIndex++];
+        highlightActiveSpeechSentence(item.sentIdx);
 
-        // Tải trước câu tiếp theo song song để không bị trễ nhịp
-        if (index < segments.length) {
-          fetchVietnameseAudioDataUrl(segments[index].text).catch(() => {});
+        if (qIndex < queue.length) {
+          fetchVietnameseAudioDataUrl(queue[qIndex].text).catch(() => {});
         }
 
         try {
-          const dataUrl = await fetchVietnameseAudioDataUrl(seg.text);
+          const dataUrl = await fetchVietnameseAudioDataUrl(item.text);
           if (sessionId !== speechSessionId) return;
 
           const audio = new Audio(dataUrl);
           currentAudioObj = audio;
-          audio.playbackRate = seg.emphasis ? 0.92 : 0.98;
+          audio.playbackRate = selectedSpeechRate;
 
           audio.onended = () => {
             if (sessionId !== speechSessionId) return;
             currentAudioObj = null;
-            if (seg.pauseAfter > 0) {
-              speechPauseTimer = setTimeout(playNext, seg.pauseAfter);
+            if (item.pauseAfter > 0) {
+              speechPauseTimer = setTimeout(playNext, item.pauseAfter);
             } else {
               playNext();
             }
@@ -1030,6 +1122,142 @@
       if (event.target && event.target.id === 'team-matches-modal') {
         closeTeamMatchesModal();
       }
+    }
+
+    // =========================================================================
+    // HELPERS: TÍNH TOÁN XẾP HẠNG VÒNG BẢNG & TOP 2 HẠNG 3
+    // =========================================================================
+    function computeGroupStandingsData() {
+      const teams = tournamentData.teams || [];
+      const groupMatches = (tournamentData.matches || []).filter(
+        m => m.Vong && m.Vong.trim().toLowerCase() === 'vòng bảng'
+      );
+
+      const statsMap = {};
+      teams.forEach(t => {
+        statsMap[t.MaDoi] = {
+          team: t,
+          played: 0,
+          totalMatches: 0,
+          points: 0,
+          diff: 0,
+          h2hNotes: [],
+          hasGroupFinishedMatch: false,
+          isTop2InGroup: false,
+          isBestThird: false
+        };
+      });
+
+      groupMatches.forEach(m => {
+        const isDone = (m.TrangThai || '').trim() === 'Đã thi đấu';
+        if (statsMap[m.MaDoiThu1]) {
+          statsMap[m.MaDoiThu1].totalMatches += 1;
+          if (isDone) {
+            statsMap[m.MaDoiThu1].played += 1;
+            statsMap[m.MaDoiThu1].points += parseFloat(m.DiemDoiThu1) || 0;
+            statsMap[m.MaDoiThu1].diff += parseFloat(m.HieuSoDoiThu1) || 0;
+          }
+        }
+        if (statsMap[m.MaDoiThu2]) {
+          statsMap[m.MaDoiThu2].totalMatches += 1;
+          if (isDone) {
+            statsMap[m.MaDoiThu2].played += 1;
+            statsMap[m.MaDoiThu2].points += parseFloat(m.DiemDoiThu2) || 0;
+            statsMap[m.MaDoiThu2].diff += parseFloat(m.HieuSoDoiThu2) || 0;
+          }
+        }
+      });
+
+      const groups = {};
+      Object.values(statsMap).forEach(item => {
+        const grpName = item.team.BangThiDau || 'Khác';
+        if (!groups[grpName]) groups[grpName] = [];
+        groups[grpName].push(item);
+      });
+
+      const sortedGroupNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+
+      sortedGroupNames.forEach(gName => {
+        const grpList = groups[gName];
+        const groupHasFinished = grpList.some(st => st.played >= 1);
+
+        grpList.sort((a, b) => {
+          if (b.points !== a.points) return b.points - a.points;
+          if (b.diff !== a.diff) return b.diff - a.diff;
+          const h2h = getHeadToHeadResult(a.team.MaDoi, b.team.MaDoi, groupMatches);
+          if (h2h === 1) return -1;
+          if (h2h === -1) return 1;
+          return 0;
+        });
+
+        grpList.forEach((st, idx) => {
+          st.hasGroupFinishedMatch = groupHasFinished;
+          st.isTop2InGroup = groupHasFinished && idx < 2;
+        });
+
+        if (groupHasFinished) {
+          for (let i = 0; i < grpList.length; i++) {
+            for (let j = i + 1; j < grpList.length; j++) {
+              if (grpList[i].points === grpList[j].points && grpList[i].diff === grpList[j].diff) {
+                const h2h = getHeadToHeadResult(grpList[i].team.MaDoi, grpList[j].team.MaDoi, groupMatches);
+                const labelUpper = formatTeamCodeLabel(grpList[i].team);
+                const labelLower = formatTeamCodeLabel(grpList[j].team);
+                if (h2h === 1) {
+                  grpList[i].h2hNotes.push({
+                    type: 'win',
+                    text: `Thắng trận đối đầu với ${labelLower}`
+                  });
+                  grpList[j].h2hNotes.push({
+                    type: 'lose',
+                    text: `Thua trận đối đầu với ${labelUpper}`
+                  });
+                }
+              }
+            }
+          }
+        }
+      });
+
+      // Đội xếp thứ 3 của mỗi bảng
+      const thirdPlaceTeams = [];
+      sortedGroupNames.forEach(gName => {
+        if (groups[gName] && groups[gName].length >= 3) {
+          thirdPlaceTeams.push({
+            ...groups[gName][2],
+            groupName: gName,
+            sourceRef: groups[gName][2]
+          });
+        }
+      });
+
+      const hasAnyThirdPlacePlayed = thirdPlaceTeams.some(st => st.played >= 1);
+
+      if (hasAnyThirdPlacePlayed) {
+        thirdPlaceTeams.sort((a, b) => {
+          const aPlayed = a.played >= 1 ? 1 : 0;
+          const bPlayed = b.played >= 1 ? 1 : 0;
+          if (bPlayed !== aPlayed) return bPlayed - aPlayed;
+          if (b.points !== a.points) return b.points - a.points;
+          return b.diff - a.diff;
+        });
+
+        thirdPlaceTeams.forEach((st, idx) => {
+          const isBest = st.played >= 1 && idx < 2;
+          st.isBestThird = isBest;
+          if (st.sourceRef) {
+            st.sourceRef.isBestThird = isBest;
+          }
+        });
+      }
+
+      return {
+        teams,
+        groupMatches,
+        groups,
+        sortedGroupNames,
+        thirdPlaceTeams,
+        hasAnyThirdPlacePlayed
+      };
     }
 
     // =========================================================================
@@ -1374,90 +1602,25 @@
     // VIEW 1: VÒNG BẢNG
     // =========================================================================
     function renderGroupStageView(container) {
-      const teams = tournamentData.teams || [];
-      const groupMatches = (tournamentData.matches || []).filter(m => m.Vong && m.Vong.toLowerCase() === 'vòng bảng');
       const teamsMap = getTeamsMap();
-
-      const statsMap = {};
-      teams.forEach(t => {
-        statsMap[t.MaDoi] = {
-          team: t,
-          played: 0,
-          totalMatches: 0,
-          points: 0,
-          diff: 0,
-          h2hNotes: []
-        };
-      });
-
-      groupMatches.forEach(m => {
-        const isDone = (m.TrangThai || '').trim() === 'Đã thi đấu';
-        if (statsMap[m.MaDoiThu1]) {
-          statsMap[m.MaDoiThu1].totalMatches += 1;
-          if (isDone) {
-            statsMap[m.MaDoiThu1].played += 1;
-            statsMap[m.MaDoiThu1].points += parseFloat(m.DiemDoiThu1) || 0;
-            statsMap[m.MaDoiThu1].diff += parseFloat(m.HieuSoDoiThu1) || 0;
-          }
-        }
-        if (statsMap[m.MaDoiThu2]) {
-          statsMap[m.MaDoiThu2].totalMatches += 1;
-          if (isDone) {
-            statsMap[m.MaDoiThu2].played += 1;
-            statsMap[m.MaDoiThu2].points += parseFloat(m.DiemDoiThu2) || 0;
-            statsMap[m.MaDoiThu2].diff += parseFloat(m.HieuSoDoiThu2) || 0;
-          }
-        }
-      });
-
-      const groups = {};
-      Object.values(statsMap).forEach(item => {
-        const grpName = item.team.BangThiDau || 'Khác';
-        if (!groups[grpName]) groups[grpName] = [];
-        groups[grpName].push(item);
-      });
-
-      const sortedGroupNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
-
-      sortedGroupNames.forEach(gName => {
-        const grpList = groups[gName];
-        grpList.sort((a, b) => {
-          if (b.points !== a.points) return b.points - a.points;
-          if (b.diff !== a.diff) return b.diff - a.diff;
-          const h2h = getHeadToHeadResult(a.team.MaDoi, b.team.MaDoi, groupMatches);
-          if (h2h === 1) return -1;
-          if (h2h === -1) return 1;
-          return 0;
-        });
-
-        for (let i = 0; i < grpList.length; i++) {
-          for (let j = i + 1; j < grpList.length; j++) {
-            if (grpList[i].points === grpList[j].points && grpList[i].diff === grpList[j].diff) {
-              const h2h = getHeadToHeadResult(grpList[i].team.MaDoi, grpList[j].team.MaDoi, groupMatches);
-              const labelUpper = formatTeamCodeLabel(grpList[i].team);
-              const labelLower = formatTeamCodeLabel(grpList[j].team);
-              if (h2h === 1) {
-                grpList[i].h2hNotes.push({
-                  type: 'win',
-                  text: `Thắng trận đối đầu với ${labelLower}`
-                });
-                grpList[j].h2hNotes.push({
-                  type: 'lose',
-                  text: `Thua trận đối đầu với ${labelUpper}`
-                });
-              }
-            }
-          }
-        }
-      });
+      const {
+        groupMatches,
+        groups,
+        sortedGroupNames,
+        thirdPlaceTeams,
+        hasAnyThirdPlacePlayed
+      } = computeGroupStandingsData();
 
       const gridColsClass = sortedGroupNames.length >= 3 ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1';
 
       const groupsHtml = sortedGroupNames.map(gName => {
         const rowsHtml = groups[gName].map((st, idx) => {
-          const isTop2 = idx < 2;
-          const rowBg = isTop2 ? 'bg-emerald-100/90 hover:bg-emerald-200/80 font-semibold' : 'bg-white hover:bg-slate-50';
-          const badgeRank = isTop2
+          // Chỉ tô màu xanh lá cho 2 đội cao nhất khi bảng đó đã có ít nhất 1 trận Đã thi đấu
+          const highlightGreen = st.isTop2InGroup;
+          const rowBg = highlightGreen
+            ? 'bg-emerald-100/90 hover:bg-emerald-200/80 font-semibold'
+            : 'bg-white hover:bg-slate-50';
+          const badgeRank = highlightGreen
             ? `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-600 text-white text-xs font-black">${idx + 1}</span>`
             : `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-200 text-slate-700 text-xs font-bold">${idx + 1}</span>`;
 
@@ -1526,21 +1689,7 @@
         `;
       }).join('');
 
-      const thirdPlaceTeams = [];
-      sortedGroupNames.forEach(gName => {
-        if (groups[gName] && groups[gName].length >= 3) {
-          thirdPlaceTeams.push({
-            ...groups[gName][2],
-            groupName: gName
-          });
-        }
-      });
-
-      thirdPlaceTeams.sort((a, b) => {
-        if (b.points !== a.points) return b.points - a.points;
-        return b.diff - a.diff;
-      });
-
+      // Bảng xếp hạng các đội hạng 3: Nếu tất cả các đội hạng 3 đều chưa có ít nhất 1 trận Đã thi đấu -> hiển thị "Chờ kết quả thi đấu"
       const thirdPlaceHtml = thirdPlaceTeams.length ? `
         <div class="mt-4 bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden flex flex-col">
           <div class="bg-gradient-to-r from-amber-600 to-orange-500 px-4 py-2 flex items-center justify-between">
@@ -1548,58 +1697,64 @@
               <i class="fa-solid fa-ranking-star mr-2 text-yellow-200"></i>Xếp hạng các đội hạng 3
             </h3>
           </div>
-          <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse table-fixed">
-              <thead>
-                <tr class="bg-slate-100 text-slate-600 text-xs uppercase font-extrabold border-b border-slate-300">
-                  <th class="py-2 px-2 text-center w-10">#</th>
-                  <th class="py-2 px-2 text-center w-24 whitespace-nowrap">Bảng</th>
-                  <th class="py-2 px-2">Vận động viên</th>
-                  <th class="py-2 px-2 text-center w-14">Trận</th>
-                  <th class="py-2 px-2 text-center w-14">Điểm</th>
-                  <th class="py-2 px-2 text-center w-14">HS</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${thirdPlaceTeams.map((st, idx) => {
-                  const isTop2 = idx < 2;
-                  const rowBg = isTop2 ? 'bg-emerald-100/90 hover:bg-emerald-200/80 font-semibold' : 'bg-white hover:bg-slate-50';
-                  const badgeRank = isTop2
-                    ? `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-600 text-white text-xs font-black">${idx + 1}</span>`
-                    : `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-200 text-slate-700 text-xs font-bold">${idx + 1}</span>`;
-                  const teamCodeLabel = formatTeamCodeLabel(st.team);
-                  const p1 = getPlayerDisplayName(st.team.VDV1);
-                  const p2 = getPlayerDisplayName(st.team.VDV2);
-                  const teamClickAttr = st.team.MaDoi
-                    ? `onclick="openTeamMatchesModal('${escapeAttr(st.team.MaDoi)}')" title="Xem tất cả trận của đội này"`
-                    : '';
+          ${!hasAnyThirdPlacePlayed ? `
+            <div class="py-7 px-4 text-center text-slate-500 font-bold text-base bg-amber-50/30">
+              <i class="fa-regular fa-hourglass-half text-amber-500 mr-2"></i>Chờ kết quả thi đấu
+            </div>
+          ` : `
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse table-fixed">
+                <thead>
+                  <tr class="bg-slate-100 text-slate-600 text-xs uppercase font-extrabold border-b border-slate-300">
+                    <th class="py-2 px-2 text-center w-10">#</th>
+                    <th class="py-2 px-2 text-center w-24 whitespace-nowrap">Bảng</th>
+                    <th class="py-2 px-2">Vận động viên</th>
+                    <th class="py-2 px-2 text-center w-14">Trận</th>
+                    <th class="py-2 px-2 text-center w-14">Điểm</th>
+                    <th class="py-2 px-2 text-center w-14">HS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${thirdPlaceTeams.map((st, idx) => {
+                    const isTop2 = st.isBestThird;
+                    const rowBg = isTop2 ? 'bg-emerald-100/90 hover:bg-emerald-200/80 font-semibold' : 'bg-white hover:bg-slate-50';
+                    const badgeRank = isTop2
+                      ? `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-600 text-white text-xs font-black">${idx + 1}</span>`
+                      : `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-200 text-slate-700 text-xs font-bold">${idx + 1}</span>`;
+                    const teamCodeLabel = formatTeamCodeLabel(st.team);
+                    const p1 = getPlayerDisplayName(st.team.VDV1);
+                    const p2 = getPlayerDisplayName(st.team.VDV2);
+                    const teamClickAttr = st.team.MaDoi
+                      ? `onclick="openTeamMatchesModal('${escapeAttr(st.team.MaDoi)}')" title="Xem tất cả trận của đội này"`
+                      : '';
 
-                  return `
-                    <tr class="${rowBg} border-b border-slate-200 transition">
-                      <td class="py-2 px-2 text-center align-middle">${badgeRank}</td>
-                      <td class="py-2 px-2 text-center align-middle whitespace-nowrap">
-                        <span class="px-2.5 py-0.5 rounded bg-sky-700 text-white text-xs font-extrabold whitespace-nowrap inline-block">Bảng ${st.groupName}</span>
-                      </td>
-                      <td ${teamClickAttr} class="py-2 px-2 align-middle break-words whitespace-normal cursor-pointer group">
-                        ${teamCodeLabel ? `<div class="mb-0.5"><span class="inline-block text-[11px] font-extrabold text-sky-800 bg-sky-100 border border-sky-200 px-1.5 py-0.2 rounded">${teamCodeLabel}</span></div>` : ''}
-                        <div class="text-slate-900 group-hover:text-sky-700 group-hover:underline font-bold text-sm leading-snug">${p1}</div>
-                        ${p2 ? `<div class="text-slate-700 group-hover:text-sky-700 group-hover:underline font-semibold text-sm leading-snug">${p2}</div>` : ''}
-                      </td>
-                      <td class="py-2 px-2 text-center align-middle font-mono font-bold text-slate-700 text-sm whitespace-nowrap">
-                        ${st.played}/${st.totalMatches}
-                      </td>
-                      <td class="py-2 px-2 text-center align-middle font-black text-base text-sky-700 whitespace-nowrap">
-                        ${st.points}
-                      </td>
-                      <td class="py-2 px-2 text-center align-middle font-bold text-sm whitespace-nowrap ${st.diff > 0 ? 'text-emerald-700' : (st.diff < 0 ? 'text-rose-600' : 'text-slate-600')}">
-                        ${st.diff > 0 ? '+' : ''}${st.diff}
-                      </td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
+                    return `
+                      <tr class="${rowBg} border-b border-slate-200 transition">
+                        <td class="py-2 px-2 text-center align-middle">${badgeRank}</td>
+                        <td class="py-2 px-2 text-center align-middle whitespace-nowrap">
+                          <span class="px-2.5 py-0.5 rounded bg-sky-700 text-white text-xs font-extrabold whitespace-nowrap inline-block">Bảng ${st.groupName}</span>
+                        </td>
+                        <td ${teamClickAttr} class="py-2 px-2 align-middle break-words whitespace-normal cursor-pointer group">
+                          ${teamCodeLabel ? `<div class="mb-0.5"><span class="inline-block text-[11px] font-extrabold text-sky-800 bg-sky-100 border border-sky-200 px-1.5 py-0.2 rounded">${teamCodeLabel}</span></div>` : ''}
+                          <div class="text-slate-900 group-hover:text-sky-700 group-hover:underline font-bold text-sm leading-snug">${p1}</div>
+                          ${p2 ? `<div class="text-slate-700 group-hover:text-sky-700 group-hover:underline font-semibold text-sm leading-snug">${p2}</div>` : ''}
+                        </td>
+                        <td class="py-2 px-2 text-center align-middle font-mono font-bold text-slate-700 text-sm whitespace-nowrap">
+                          ${st.played}/${st.totalMatches}
+                        </td>
+                        <td class="py-2 px-2 text-center align-middle font-black text-base text-sky-700 whitespace-nowrap">
+                          ${st.points}
+                        </td>
+                        <td class="py-2 px-2 text-center align-middle font-bold text-sm whitespace-nowrap ${st.diff > 0 ? 'text-emerald-700' : (st.diff < 0 ? 'text-rose-600' : 'text-slate-600')}">
+                          ${st.diff > 0 ? '+' : ''}${st.diff}
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          `}
         </div>
       ` : '';
 
@@ -1788,16 +1943,17 @@
     }
 
     // =========================================================================
-    // VIEW 4: TRANG SƠ ĐỒ (MAP CHÍNH XÁC MÃ TRẬN TK1, TK2... VỚI GHI CHÚ BÁN KẾT)
+    // VIEW 4: TRANG SƠ ĐỒ (CỘT VÒNG BẢNG HIỂN THỊ CÁC ĐỘI & TÔ XANH ĐỘI ĐI TIẾP)
     // =========================================================================
     function renderBracketDiagramView(container) {
       const matches = tournamentData.matches || [];
+      const teams = tournamentData.teams || [];
       const teamsMap = getTeamsMap();
 
-      if (matches.length === 0) {
+      if (matches.length === 0 && teams.length === 0) {
         container.innerHTML = `
           <div class="h-full flex items-center justify-center bg-white rounded-2xl border border-slate-200 text-slate-400 text-2xl font-bold">
-            Chưa có dữ liệu trận đấu để hiển thị sơ đồ
+            Chưa có dữ liệu để hiển thị sơ đồ
           </div>`;
         return;
       }
@@ -1854,17 +2010,6 @@
 
         return aligned;
       };
-
-      const groupMatches = matches
-        .filter(m => (m.Vong || '').trim().toLowerCase() === 'vòng bảng')
-        .sort((a, b) => {
-          const gA = (teamsMap[a.MaDoiThu1]?.BangThiDau || teamsMap[a.MaDoiThu2]?.BangThiDau || 'Z');
-          const gB = (teamsMap[b.MaDoiThu1]?.BangThiDau || teamsMap[b.MaDoiThu2]?.BangThiDau || 'Z');
-          if (gA !== gB) return gA.localeCompare(gB);
-          const luotDiff = parseLuotNumber(a.LuotTran) - parseLuotNumber(b.LuotTran);
-          if (luotDiff !== 0) return luotDiff;
-          return parseVNDateTime(a.NgayGioThiDau) - parseVNDateTime(b.NgayGioThiDau);
-        });
 
       const mainStageNames = ['Tứ kết', 'Bán kết', 'Chung kết'];
       const mainStages = mainStageNames
@@ -2010,24 +2155,82 @@
         `;
       };
 
+      // Cột Vòng Bảng: Hiển thị các đội trong vòng bảng + tô xanh 2 đội nhất nhì mỗi bảng & 2 đội xếp 3 thành tích tốt nhất
+      const { groups, sortedGroupNames } = computeGroupStandingsData();
       let groupColHtml = '';
-      if (groupMatches.length > 0) {
-        const byGroup = {};
-        groupMatches.forEach(m => {
-          const g = (teamsMap[m.MaDoiThu1]?.BangThiDau || teamsMap[m.MaDoiThu2]?.BangThiDau || 'Chung');
-          if (!byGroup[g]) byGroup[g] = [];
-          byGroup[g].push(m);
-        });
 
-        const groupBlocksHtml = Object.keys(byGroup).sort((a, b) => a.localeCompare(b)).map(gName => `
-          <div class="space-y-2">
-            <div class="sticky top-0 z-10 bg-sky-100/95 backdrop-blur-sm border border-sky-300 text-sky-900 px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-between shadow-sm">
-              <span><i class="fa-solid fa-layer-group mr-1.5 text-sky-700"></i>Bảng ${gName}</span>
-              <span>${byGroup[gName].length} trận</span>
+      if (sortedGroupNames.length > 0) {
+        const groupTeamBlocksHtml = sortedGroupNames.map(gName => {
+          const rowsHtml = groups[gName].map((st, idx) => {
+            const isQualified = st.isTop2InGroup || st.isBestThird;
+            const rowBg = isQualified
+              ? 'bg-emerald-100/95 hover:bg-emerald-200/85 font-semibold'
+              : 'bg-white hover:bg-slate-50';
+            const badgeRank = isQualified
+              ? `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-600 text-white text-xs font-black">${idx + 1}</span>`
+              : `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-200 text-slate-700 text-xs font-bold">${idx + 1}</span>`;
+
+            const teamCodeLabel = formatTeamCodeLabel(st.team);
+            const p1 = getPlayerDisplayName(st.team.VDV1);
+            const p2 = getPlayerDisplayName(st.team.VDV2);
+            const teamClickAttr = st.team.MaDoi
+              ? `onclick="openTeamMatchesModal('${escapeAttr(st.team.MaDoi)}')" title="Xem tất cả trận của đội này"`
+              : '';
+
+            let qualBadge = '';
+            if (st.isTop2InGroup) {
+              qualBadge = `<span class="inline-block text-[10px] font-extrabold text-emerald-900 bg-emerald-200/90 border border-emerald-300 px-1.5 py-0.2 rounded">${idx === 0 ? 'Nhất bảng' : 'Nhì bảng'}</span>`;
+            } else if (st.isBestThird) {
+              qualBadge = `<span class="inline-block text-[10px] font-extrabold text-teal-900 bg-teal-200/90 border border-teal-300 px-1.5 py-0.2 rounded">Top 2 hạng 3</span>`;
+            }
+
+            return `
+              <tr class="${rowBg} border-b border-slate-200 transition">
+                <td class="py-2 px-2 text-center align-middle">${badgeRank}</td>
+                <td ${teamClickAttr} class="py-2 px-2 align-middle break-words whitespace-normal cursor-pointer group">
+                  <div class="flex flex-wrap items-center gap-1 mb-0.5">
+                    ${teamCodeLabel ? `<span class="inline-block text-[10px] font-extrabold text-sky-800 bg-sky-100 border border-sky-200 px-1.5 py-0.2 rounded">${teamCodeLabel}</span>` : ''}
+                    ${qualBadge}
+                  </div>
+                  <div class="text-slate-900 group-hover:text-sky-700 group-hover:underline font-bold text-xs md:text-sm leading-snug">${p1}</div>
+                  ${p2 ? `<div class="text-slate-700 group-hover:text-sky-700 group-hover:underline font-semibold text-xs md:text-sm leading-snug">${p2}</div>` : ''}
+                </td>
+                <td class="py-2 px-1.5 text-center align-middle font-mono font-bold text-slate-700 text-xs whitespace-nowrap">
+                  ${st.played}/${st.totalMatches}
+                </td>
+                <td class="py-2 px-1.5 text-center align-middle font-black text-sm text-sky-700 whitespace-nowrap">
+                  ${st.points}
+                </td>
+                <td class="py-2 px-1.5 text-center align-middle font-bold text-xs whitespace-nowrap ${st.diff > 0 ? 'text-emerald-700' : (st.diff < 0 ? 'text-rose-600' : 'text-slate-600')}">
+                  ${st.diff > 0 ? '+' : ''}${st.diff}
+                </td>
+              </tr>
+            `;
+          }).join('');
+
+          return `
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div class="bg-gradient-to-r from-sky-700 to-emerald-600 px-3 py-1.5 flex items-center justify-between">
+                <span class="font-black text-white text-sm uppercase tracking-wide">
+                  <i class="fa-solid fa-layer-group mr-1.5 text-amber-300"></i>Bảng ${gName}
+                </span>
+                <span class="text-[11px] font-bold text-white/90">${groups[gName].length} đội</span>
+              </div>
+              <table class="w-full text-left border-collapse table-fixed">
+                <thead>
+                  <tr class="bg-slate-100 text-slate-600 text-[11px] uppercase font-extrabold border-b border-slate-300">
+                    <th class="py-1.5 px-2 text-center w-9">#</th>
+                    <th class="py-1.5 px-2">Đội / VĐV</th>
+                    <th class="py-1.5 px-1.5 text-center w-12">Trận</th>
+                    <th class="py-1.5 px-1.5 text-center w-12">Điểm</th>
+                    <th class="py-1.5 px-1.5 text-center w-12">HS</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
             </div>
-            ${byGroup[gName].map(m => renderMatchCard(m, teamsMap, false, true)).join('')}
-          </div>
-        `).join('');
+          `;
+        }).join('');
 
         groupColHtml = `
           <div class="w-[390px] xl:w-[420px] shrink-0 h-full bg-white/80 rounded-2xl border border-sky-200 p-2.5 shadow-sm flex flex-col">
@@ -2036,11 +2239,11 @@
                 <i class="fa-solid fa-table-cells"></i> Vòng bảng
               </span>
               <span class="text-xs font-extrabold bg-white/20 px-2 py-0.5 rounded-full">
-                ${groupMatches.length} trận
+                ${teams.length} đội
               </span>
             </div>
             <div class="flex-1 overflow-y-auto space-y-3 pr-1">
-              ${groupBlocksHtml}
+              ${groupTeamBlocksHtml}
             </div>
           </div>
 
@@ -2066,6 +2269,9 @@
               <span>Sơ đồ lộ trình giải đấu</span>
             </div>
             <div class="flex items-center gap-3 text-xs font-semibold text-slate-500">
+              <span class="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded">
+                <span class="w-2 h-2 rounded-full bg-emerald-600"></span>Nhất/Nhì bảng & Top 2 hạng 3
+              </span>
               <span><i class="fa-solid fa-arrows-left-right text-sky-600 mr-1"></i>Kéo sang ngang để xem toàn bộ các vòng</span>
             </div>
           </div>
