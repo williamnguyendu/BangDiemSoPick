@@ -155,9 +155,35 @@
     <main id="board-content" class="flex-1 overflow-hidden p-4 hidden"></main>
   </div>
 
+  <!-- ==================== POPUP LỊCH THI ĐẤU RIÊNG CỦA TỪNG BẢNG (2 CỘT CÓ ĐƯỜNG NGĂN CÁCH) ==================== -->
+  <div id="group-matches-modal" onclick="handleGroupModalBackdropClick(event)"
+       class="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm hidden flex items-center justify-center p-3 md:p-5">
+    <div class="bg-slate-50 w-full max-w-[1440px] max-h-[92vh] rounded-3xl shadow-2xl border-2 border-sky-500 flex flex-col overflow-hidden">
+      <!-- Modal Header -->
+      <div class="bg-gradient-to-r from-slate-900 via-sky-900 to-emerald-900 text-white px-5 py-3.5 flex items-center justify-between gap-4 shrink-0 border-b-2 border-emerald-500">
+        <div class="flex flex-wrap items-center gap-3 min-w-0">
+          <span class="bg-amber-400 text-slate-950 text-xs md:text-sm font-black uppercase px-3 py-1 rounded-lg shadow">
+            <i class="fa-regular fa-calendar-days mr-1.5"></i>Lịch thi đấu
+          </span>
+          <h3 id="modal-group-title" class="text-xl md:text-2xl font-black text-white uppercase tracking-wide">
+            BẢNG A
+          </h3>
+          <span id="modal-group-stats" class="bg-white/15 text-sky-100 text-xs md:text-sm font-bold px-3 py-1 rounded-full"></span>
+        </div>
+        <button onclick="closeGroupMatchesModal()" title="Đóng (ESC)"
+                class="w-10 h-10 rounded-xl bg-white/10 hover:bg-rose-600 text-white flex items-center justify-center text-lg font-bold transition shrink-0 cursor-pointer">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body: Render 2 cột (hết cột trái -> sang cột phải) + đường ngăn cách ở giữa -->
+      <div id="modal-group-matches-list" class="flex-1 overflow-y-auto p-4"></div>
+    </div>
+  </div>
+
   <!-- ==================== POPUP DANH SÁCH TRẬN CỦA ĐỘI ==================== -->
   <div id="team-matches-modal" onclick="handleModalBackdropClick(event)"
-       class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm hidden flex items-center justify-center p-4 md:p-6">
+       class="fixed inset-0 z-[55] bg-slate-950/70 backdrop-blur-sm hidden flex items-center justify-center p-4 md:p-6">
     <div class="bg-slate-50 w-full max-w-4xl max-h-[90vh] rounded-3xl shadow-2xl border-2 border-emerald-500 flex flex-col overflow-hidden">
       <!-- Modal Header -->
       <div class="bg-gradient-to-r from-slate-900 via-sky-950 to-emerald-950 text-white px-5 py-4 flex items-center justify-between gap-4 shrink-0 border-b-2 border-emerald-500">
@@ -239,6 +265,7 @@
     let refreshInterval = null;
     let isFetching = false;
     let currentModalTeamId = null;
+    let currentModalGroupName = null;
 
     // Biến điều khiển phát âm thanh thông báo tiếng Việt (TTS)
     let speakingMatchIdx = null;
@@ -282,6 +309,7 @@
     window.addEventListener('popstate', () => {
       stopAnnouncement();
       closeTeamMatchesModal();
+      closeGroupMatchesModal();
       const urlParams = new URLSearchParams(window.location.search);
       const giaiParam = urlParams.get('giai');
       if (giaiParam) {
@@ -293,8 +321,17 @@
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (speakingMatchIdx !== null) stopAnnouncement();
-        if (currentModalTeamId) closeTeamMatchesModal();
+        if (speakingMatchIdx !== null) {
+          stopAnnouncement();
+          return;
+        }
+        if (currentModalTeamId) {
+          closeTeamMatchesModal();
+          return;
+        }
+        if (currentModalGroupName) {
+          closeGroupMatchesModal();
+        }
       }
     });
 
@@ -315,6 +352,7 @@
     function showSelectorScreen() {
       stopAnnouncement();
       closeTeamMatchesModal();
+      closeGroupMatchesModal();
       if (refreshInterval) clearInterval(refreshInterval);
       currentMaGiaiDau = null;
       document.getElementById('scoreboard-screen').classList.add('hidden');
@@ -901,6 +939,8 @@
     // =========================================================================
     async function selectTournament(maGiaiDau, pushUrl = true) {
       stopAnnouncement();
+      closeGroupMatchesModal();
+      closeTeamMatchesModal();
       currentMaGiaiDau = maGiaiDau;
       if (pushUrl) {
         const url = new URL(window.location);
@@ -957,6 +997,9 @@
           }
           renderActiveTab();
 
+          if (currentModalGroupName) {
+            openGroupMatchesModal(currentModalGroupName);
+          }
           if (currentModalTeamId) {
             openTeamMatchesModal(currentModalTeamId);
           }
@@ -1053,7 +1096,93 @@
     }
 
     // =========================================================================
-    // POPUP: HIỂN THỊ TẤT CẢ TRẬN THI ĐẤU CỦA ĐỘI (TĂNG DẦN THEO THỜI GIAN)
+    // POPUP 1: LỊCH THI ĐẤU RIÊNG CỦA TỪNG BẢNG (HẾT CỘT TRÁI -> SANG CỘT PHẢI)
+    // =========================================================================
+    function openGroupMatchesModal(groupName) {
+      if (!groupName || !tournamentData) return;
+      currentModalGroupName = groupName;
+
+      const teamsMap = getTeamsMap();
+      const groupMatches = (tournamentData.matches || [])
+        .filter(m => {
+          if (!m.Vong || m.Vong.trim().toLowerCase() !== 'vòng bảng') return false;
+          const g1 = teamsMap[m.MaDoiThu1]?.BangThiDau || '';
+          const g2 = teamsMap[m.MaDoiThu2]?.BangThiDau || '';
+          return g1 === groupName || g2 === groupName;
+        })
+        .sort((a, b) => {
+          const luotDiff = parseLuotNumber(a.LuotTran) - parseLuotNumber(b.LuotTran);
+          if (luotDiff !== 0) return luotDiff;
+          const tA = parseVNDateTime(a.NgayGioThiDau);
+          const tB = parseVNDateTime(b.NgayGioThiDau);
+          if (tA !== tB) {
+            if (tA === 0) return 1;
+            if (tB === 0) return -1;
+            return tA - tB;
+          }
+          return (a.MaTran || '').localeCompare(b.MaTran || '');
+        });
+
+      const doneCount = groupMatches.filter(m => (m.TrangThai || '').trim() === 'Đã thi đấu').length;
+      const liveCount = groupMatches.filter(m => (m.TrangThai || '').trim() === 'Đang thi đấu').length;
+
+      document.getElementById('modal-group-title').textContent = `BẢNG ${groupName}`;
+      document.getElementById('modal-group-stats').textContent =
+        `${groupMatches.length} trận • Đã đấu: ${doneCount}${liveCount > 0 ? ` • Đang đấu: ${liveCount}` : ''}`;
+
+      const listEl = document.getElementById('modal-group-matches-list');
+      if (!groupMatches.length) {
+        listEl.innerHTML = '<div class="text-center text-slate-400 py-12 text-lg font-semibold">Chưa có trận thi đấu nào trong Bảng này</div>';
+      } else if (groupMatches.length === 1) {
+        listEl.innerHTML = `
+          <div class="max-w-3xl mx-auto">
+            ${renderMatchCard(groupMatches[0], teamsMap, false, true, false, true)}
+          </div>
+        `;
+      } else {
+        // Chia danh sách: Liệt kê hết cột trái trước, phần còn lại sang cột phải, ở giữa có đường ngăn cách
+        const mid = Math.ceil(groupMatches.length / 2);
+        const leftMatches = groupMatches.slice(0, mid);
+        const rightMatches = groupMatches.slice(mid);
+
+        listEl.innerHTML = `
+          <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-4 items-stretch">
+            <!-- CỘT TRÁI -->
+            <div class="space-y-3.5 flex flex-col">
+              ${leftMatches.map(m => renderMatchCard(m, teamsMap, false, true, false, true)).join('')}
+            </div>
+
+            <!-- ĐƯỜNG NGĂN CÁCH GIỮA 2 CỘT -->
+            <div class="hidden lg:flex flex-col items-center px-1" aria-hidden="true">
+              <div class="w-[2px] flex-1 bg-gradient-to-b from-sky-400 via-slate-300 to-emerald-400 rounded-full"></div>
+            </div>
+            <div class="lg:hidden border-t-2 border-dashed border-slate-300 my-1"></div>
+
+            <!-- CỘT PHẢI -->
+            <div class="space-y-3.5 flex flex-col">
+              ${rightMatches.map(m => renderMatchCard(m, teamsMap, false, true, false, true)).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      document.getElementById('group-matches-modal').classList.remove('hidden');
+      updateSpeakerButtonsUI();
+    }
+
+    function closeGroupMatchesModal() {
+      currentModalGroupName = null;
+      document.getElementById('group-matches-modal').classList.add('hidden');
+    }
+
+    function handleGroupModalBackdropClick(event) {
+      if (event.target && event.target.id === 'group-matches-modal') {
+        closeGroupMatchesModal();
+      }
+    }
+
+    // =========================================================================
+    // POPUP 2: HIỂN THỊ TẤT CẢ TRẬN THI ĐẤU CỦA ĐỘI (TĂNG DẦN THEO THỜI GIAN)
     // =========================================================================
     function openTeamMatchesModal(maDoi) {
       if (!maDoi || !tournamentData) return;
@@ -1218,7 +1347,6 @@
         }
       });
 
-      // Đội xếp thứ 3 của mỗi bảng
       const thirdPlaceTeams = [];
       sortedGroupNames.forEach(gName => {
         if (groups[gName] && groups[gName].length >= 3) {
@@ -1476,9 +1604,9 @@
     }
 
     // =========================================================================
-    // COMPONENT: THẺ TRẬN ĐẤU (CÓ NÚT LOA PHÁT THÔNG BÁO)
+    // COMPONENT: THẺ TRẬN ĐẤU (LÀM RÕ LƯỢT ĐẤU, GIỜ & SÂN TRONG POPUP LỊCH BẢNG)
     // =========================================================================
-    function renderMatchCard(match, teamsMap, isLargeFinal = false, isGroupStage = false, showRoundBadge = false) {
+    function renderMatchCard(match, teamsMap, isLargeFinal = false, isGroupStage = false, showRoundBadge = false, highlightSchedule = false) {
       const team1 = teamsMap[match.MaDoiThu1];
       const team2 = teamsMap[match.MaDoiThu2];
       const status = (match.TrangThai || 'Chờ thi đấu').trim();
@@ -1539,6 +1667,30 @@
       const isSpeaking = speakingMatchIdx !== null && speakingMatchIdx === matchIdx;
       const speakerBtnSize = isLargeFinal ? 'w-10 h-10 text-base' : 'w-7 h-7 text-xs';
 
+      // Nhãn Lượt đấu rõ ràng hơn khi mở Popup Lịch thi đấu của Bảng
+      const luotBadgeHtml = match.LuotTran
+        ? (highlightSchedule
+            ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs md:text-sm font-black bg-indigo-600 text-white shadow-xs"><i class="fa-solid fa-list-ol text-indigo-200"></i>${match.LuotTran}</span>`
+            : `<span class="px-2 py-0.5 rounded-md font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">${match.LuotTran}</span>`)
+        : '';
+
+      // Chế độ hiển thị Giờ & Sân rõ ràng hơn trong Popup Lịch thi đấu của Bảng
+      const scheduleMetaHtml = highlightSchedule
+        ? `
+          <div class="flex flex-wrap items-center gap-2">
+            ${timeDisplay ? `<span class="inline-flex items-center gap-1.5 bg-amber-100 text-amber-950 border border-amber-300 px-2.5 py-1 rounded-lg text-xs md:text-sm font-black shadow-xs"><i class="fa-regular fa-clock text-amber-700"></i>${timeDisplay}</span>` : ''}
+            ${match.SanThiDau ? `<span class="inline-flex items-center gap-1.5 bg-sky-700 text-white px-2.5 py-1 rounded-lg text-xs md:text-sm font-black shadow-xs"><i class="fa-solid fa-location-dot text-amber-300"></i>${match.SanThiDau}</span>` : ''}
+            ${match.TenTrongTai ? `<span class="text-xs text-slate-600 font-semibold"><i class="fa-solid fa-user-tie mr-1"></i>TT: ${match.TenTrongTai}</span>` : ''}
+          </div>
+        `
+        : `
+          <div class="flex flex-wrap items-center justify-center gap-2.5 text-slate-600 font-semibold ${isLargeFinal ? 'text-base' : 'text-xs'}">
+            ${match.SanThiDau ? `<span class="bg-white/80 px-2 py-0.5 rounded border border-slate-200 text-sky-800 font-bold"><i class="fa-solid fa-location-dot mr-1 text-red-500"></i>${match.SanThiDau}</span>` : ''}
+            ${timeDisplay ? `<span><i class="fa-regular fa-clock mr-1"></i>${timeDisplay}</span>` : ''}
+            ${match.TenTrongTai ? `<span><i class="fa-solid fa-user-tie mr-1"></i>TT: ${match.TenTrongTai}</span>` : ''}
+          </div>
+        `;
+
       return `
         <div class="${cardClass} ${padClass} transition-all flex flex-col justify-between">
           <!-- Hàng trên: Trạng thái, Vòng, Bảng, Lượt trận - Sân/Giờ/Trọng tài - Nút Loa & Mã trận -->
@@ -1548,15 +1700,11 @@
                 ${isLive ? '<i class="fa-solid fa-circle text-[8px] mr-1"></i>' : ''}${status}
               </span>
               ${showRoundBadge && match.Vong ? `<span class="px-2 py-0.5 rounded-md font-extrabold bg-slate-800 text-white">${match.Vong}</span>` : ''}
-              ${isGroupStage && bangThiDau ? `<span class="px-2 py-0.5 rounded-md font-extrabold bg-sky-700 text-white">Bảng ${bangThiDau}</span>` : ''}
-              ${match.LuotTran ? `<span class="px-2 py-0.5 rounded-md font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">${match.LuotTran}</span>` : ''}
+              ${isGroupStage && !highlightSchedule && bangThiDau ? `<span class="px-2 py-0.5 rounded-md font-extrabold bg-sky-700 text-white">Bảng ${bangThiDau}</span>` : ''}
+              ${luotBadgeHtml}
             </div>
 
-            <div class="flex flex-wrap items-center justify-center gap-2.5 text-slate-600 font-semibold ${isLargeFinal ? 'text-base' : 'text-xs'}">
-              ${match.SanThiDau ? `<span class="bg-white/80 px-2 py-0.5 rounded border border-slate-200 text-sky-800 font-bold"><i class="fa-solid fa-location-dot mr-1 text-red-500"></i>${match.SanThiDau}</span>` : ''}
-              ${timeDisplay ? `<span><i class="fa-regular fa-clock mr-1"></i>${timeDisplay}</span>` : ''}
-              ${match.TenTrongTai ? `<span><i class="fa-solid fa-user-tie mr-1"></i>TT: ${match.TenTrongTai}</span>` : ''}
-            </div>
+            ${scheduleMetaHtml}
 
             <div class="flex items-center gap-1.5 shrink-0">
               <button type="button"
@@ -1599,7 +1747,7 @@
     }
 
     // =========================================================================
-    // VIEW 1: VÒNG BẢNG
+    // VIEW 1: VÒNG BẢNG (CÓ NÚT "LỊCH THI ĐẤU" Ở GÓC PHẢI MỖI BẢNG)
     // =========================================================================
     function renderGroupStageView(container) {
       const teamsMap = getTeamsMap();
@@ -1615,7 +1763,6 @@
 
       const groupsHtml = sortedGroupNames.map(gName => {
         const rowsHtml = groups[gName].map((st, idx) => {
-          // Chỉ tô màu xanh lá cho 2 đội cao nhất khi bảng đó đã có ít nhất 1 trận Đã thi đấu
           const highlightGreen = st.isTop2InGroup;
           const rowBg = highlightGreen
             ? 'bg-emerald-100/90 hover:bg-emerald-200/80 font-semibold'
@@ -1666,10 +1813,17 @@
 
         return `
           <div class="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden flex flex-col">
-            <div class="bg-gradient-to-r from-sky-700 to-emerald-600 px-4 py-2.5 flex items-center justify-between">
+            <div class="bg-gradient-to-r from-sky-700 to-emerald-600 px-4 py-2.5 flex items-center justify-between gap-2">
               <h3 class="text-xl font-black text-white tracking-wide uppercase">
                 <i class="fa-solid fa-layer-group mr-2 text-amber-300"></i>BẢNG ${gName}
               </h3>
+              <button type="button"
+                      onclick="openGroupMatchesModal('${escapeAttr(gName)}')"
+                      title="Xem toàn bộ lịch thi đấu của Bảng ${gName}"
+                      class="bg-white/20 hover:bg-amber-400 text-white hover:text-slate-950 border border-white/30 hover:border-amber-300 px-2.5 py-1 rounded-lg text-xs font-extrabold transition flex items-center gap-1.5 shadow-xs cursor-pointer shrink-0">
+                <i class="fa-regular fa-calendar-days"></i>
+                <span>Lịch thi đấu</span>
+              </button>
             </div>
             <div class="overflow-x-auto">
               <table class="w-full text-left border-collapse table-fixed">
@@ -1689,7 +1843,6 @@
         `;
       }).join('');
 
-      // Bảng xếp hạng các đội hạng 3: Nếu tất cả các đội hạng 3 đều chưa có ít nhất 1 trận Đã thi đấu -> hiển thị "Chờ kết quả thi đấu"
       const thirdPlaceHtml = thirdPlaceTeams.length ? `
         <div class="mt-4 bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden flex flex-col">
           <div class="bg-gradient-to-r from-amber-600 to-orange-500 px-4 py-2 flex items-center justify-between">
@@ -2155,7 +2308,6 @@
         `;
       };
 
-      // Cột Vòng Bảng: Hiển thị các đội trong vòng bảng + tô xanh 2 đội nhất nhì mỗi bảng & 2 đội xếp 3 thành tích tốt nhất
       const { groups, sortedGroupNames } = computeGroupStandingsData();
       let groupColHtml = '';
 
